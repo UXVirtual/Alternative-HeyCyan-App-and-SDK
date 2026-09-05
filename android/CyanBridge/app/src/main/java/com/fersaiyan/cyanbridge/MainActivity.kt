@@ -624,7 +624,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             val action = pendingMetaCameraAction
             pendingMetaCameraAction = null
             enabledMetaCameraCheckActive = false
-            if (result.getOrDefault(PermissionStatus.Denied) == PermissionStatus.Granted) {
+            if (result.getOrDefault(PermissionStatus.Denied, PermissionStatus.Denied) == PermissionStatus.Granted) {
                 action?.invoke()
             } else {
                 showMetaError("DAT camera permission", "Meta camera permission was denied")

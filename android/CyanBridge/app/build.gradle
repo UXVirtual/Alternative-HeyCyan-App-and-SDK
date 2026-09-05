@@ -50,6 +50,7 @@ android {
                 mwdat_client_token: "AR|1057183300587462|77e92a3d9f02778279c80f220a2d81a2",
         ]
         buildConfigField "boolean", "META_DAT_DEVELOPER_CONFIGURATION", "false"
+        buildConfigField "boolean", "META_DAT_ENABLED", String.valueOf(metaDatEnabled)
 
         // Chapter 6: optional transcription API key (do not commit secrets).
         def openAiKey = project.findProperty("OPENAI_API_KEY") ?: ""
@@ -111,11 +112,13 @@ android {
                     mwdat_client_token: "0",
             ]
             buildConfigField "boolean", "META_DAT_DEVELOPER_CONFIGURATION", "true"
+            buildConfigField "boolean", "META_DAT_ENABLED", String.valueOf(metaDatEnabled)
         }
         release {
             if (keystorePropertiesFile.exists()) {
                 signingConfig = signingConfigs.release
             }
+            buildConfigField "boolean", "META_DAT_ENABLED", String.valueOf(metaDatEnabled)
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -146,6 +149,13 @@ android {
             java.exclude("com/myvu/client/ui/**")
             java.exclude("com/myvu/client/service/MyvuService.java")
             java.exclude("com/myvu/client/service/MirrorNotificationListener.java")
+            if (!metaDatEnabled) {
+                java.srcDir("src/meta-disabled/java")
+                java.exclude("**/com/fersaiyan/cyanbridge/devices/metarayban/MetaRaybanManager.kt")
+                java.exclude("**/metarayban/MetaRaybanManager.kt")
+                kotlin.exclude("**/com/fersaiyan/cyanbridge/devices/metarayban/MetaRaybanManager.kt")
+                kotlin.exclude("**/metarayban/MetaRaybanManager.kt")
+            }
         }
     }
 

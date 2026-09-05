@@ -155,7 +155,7 @@ class MetaPairingActivity : AppCompatActivity() {
 
     private val glassesCameraPermissionLauncher =
         registerForActivityResult(Wearables.RequestPermissionContract()) { result ->
-            val granted = result.getOrDefault(PermissionStatus.Denied) == PermissionStatus.Granted
+            val granted = result.getOrDefault(PermissionStatus.Denied, PermissionStatus.Denied) == PermissionStatus.Granted
             refreshState(checkGlassesCamera = false)
             screenState = screenState.copy(
                 glassesCameraGranted = granted,

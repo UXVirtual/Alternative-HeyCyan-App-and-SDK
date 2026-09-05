@@ -120,7 +120,7 @@ class CommunityPluginsActivity : AppCompatActivity() {
             val pluginId = pendingMetaCameraPlugin
             pendingMetaCameraPlugin = null
             if (pluginId == null) return@registerForActivityResult
-            if (result.getOrDefault(PermissionStatus.Denied) == PermissionStatus.Granted) {
+            if (result.getOrDefault(PermissionStatus.Denied, PermissionStatus.Denied) == PermissionStatus.Granted) {
                 applyNativePluginToggle(pluginId, enabled = true)
             } else {
                 val manager = MetaRaybanManager.getInstance(this)
