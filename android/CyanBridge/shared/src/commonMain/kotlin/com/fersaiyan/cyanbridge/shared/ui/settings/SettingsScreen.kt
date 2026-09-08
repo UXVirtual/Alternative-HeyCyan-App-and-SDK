@@ -70,6 +70,8 @@ data class SettingsUiState(
     val proPlan: String = "Pro",
     val appLanguageLabel: String = "System default",
     val providerType: AgentProviderType = AgentProviderType.PRO_SUBSCRIPTION,
+    val ttsProvider: String = "native_android",
+    val useCache: Boolean = true,
     val taskerIntegrationsAvailable: Boolean = false,
     val defaultImageQuestion: String = "Give me a concise description of the image",
     val memoryMode: MemoryPrivacyMode = MemoryPrivacyMode.PRIVATE_LOCAL,
@@ -97,6 +99,9 @@ interface SettingsScreenActions {
     fun openAppLanguageSelection()
     fun openSubscription()
     fun setProviderType(type: AgentProviderType)
+    fun setAssistantTtsProvider(provider: String)
+    fun setUseCache(enabled: Boolean)
+    fun testAssistantTts()
     fun openLocalModels()
     fun openTaskerIntegrations() = Unit
     fun setDefaultImageQuestion(question: String)
@@ -498,6 +503,48 @@ private fun AiAutomationContent(state: SettingsUiState, actions: SettingsScreenA
             )
             Text(localizedProviderLabel(type), style = MaterialTheme.typography.bodyMedium)
         }
+    }
+    Text(
+        text = "Assistant speech engine",
+        style = MaterialTheme.typography.titleSmall,
+        fontWeight = FontWeight.SemiBold,
+    )
+    listOf(
+        "native_android" to "Native Android TTS",
+        "openai_gpt4o_mini_tts" to "OpenAI gpt-4o-mini-tts",
+    ).forEach { (provider, label) ->
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { actions.setAssistantTtsProvider(provider) },
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            RadioButton(
+                selected = state.ttsProvider == provider,
+                onClick = { actions.setAssistantTtsProvider(provider) },
+            )
+            Text(label, style = MaterialTheme.typography.bodyMedium)
+        }
+    }
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = "Use cache",
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.weight(1f),
+        )
+        Switch(
+            checked = state.useCache,
+            onCheckedChange = actions::setUseCache,
+        )
+    }
+    OutlinedButton(
+        onClick = actions::testAssistantTts,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Text("Test TTS")
     }
     if (state.taskerIntegrationsAvailable) {
         Row(

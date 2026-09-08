@@ -3,6 +3,7 @@ package com.fersaiyan.cyanbridge.localmodels.remote
 import android.content.Context
 import android.util.Log
 import com.fersaiyan.cyanbridge.shared.localmodels.RemoteOpenAiApiMode
+import com.fersaiyan.cyanbridge.tts.TtsProviderPreferences
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.BufferedReader
@@ -12,6 +13,7 @@ import java.io.OutputStreamWriter
 import java.net.HttpURLConnection
 import java.net.URI
 import java.net.URL
+import java.security.MessageDigest
 import java.util.Base64
 import java.util.Locale
 
@@ -115,6 +117,134 @@ object RemoteOpenAiClient {
         return postJsonStreaming(url, apiKey, payload, onToken)
     }
 
+    suspend fun generateSpeechToFile(
+        context: Context,
+        input: String,
+        model: String = "gpt-4o-mini-tts",
+        voice: String = "alloy",
+        instructions: String = DEFAULT_SPEECH_INSTRUCTIONS,
+        responseFormat: String = "mp3",
+        forceRefresh: Boolean = false,
+    ): File {
+        require(input.isNotBlank()) { "Speech input is blank" }
+
+        val cacheFile = buildSpeechCacheFile(context, input, model, voice, instructions, responseFormat)
+        val shouldUseCache = TtsProviderPreferences.getUseCache(context)
+        val effectiveForceRefresh = forceRefresh || !shouldUseCache
+
+        if (effectiveForceRefresh) {
+            runCatching { cacheFile.delete() }
+            Log.i(TAG, "generateSpeechToFile cache bypass active; deleting cached file if present key=${cacheFile.nameWithoutExtension} path=${cacheFile.absolutePath}")
+        } else if (cacheFile.exists() && cacheFile.isFile && cacheFile.length() > 0L) {
+            if (isPlayableAudioFile(cacheFile)) {
+                Log.i(TAG, "generateSpeechToFile cache hit key=${cacheFile.nameWithoutExtension} path=${cacheFile.absolutePath}")
+                return cacheFile
+            }
+            Log.w(TAG, "generateSpeechToFile cache entry is unreadable or non-playable; refreshing key=${cacheFile.nameWithoutExtension}")
+            cacheFile.delete()
+        }
+
+        val baseUrl = RemoteOpenAiPrefs.getBaseUrl(context)
+        val apiKey = RemoteOpenAiPrefs.getApiKey(context)
+        require(baseUrl.isNotBlank()) { "Remote server base URL is not configured" }
+        require(model.isNotBlank()) { "Remote server model name is not configured" }
+        require(apiKey.isBlank() || RemoteOpenAiPrefs.isCredentialTransportAllowed(baseUrl)) {
+            "Refusing to send an API key over a public cleartext URL"
+        }
+
+        val url = buildSpeechUrl(baseUrl)
+        val payload = buildSpeechPayload(
+            model = model,
+            input = input,
+            voice = voice,
+            instructions = instructions,
+            responseFormat = responseFormat,
+        )
+
+        Log.i(TAG, "generateSpeechToFile -> $url model=$model voice=$voice response_format=$responseFormat cache_key=${cacheFile.nameWithoutExtension}")
+        val bytes = postBytes(url, apiKey, payload)
+        cacheFile.parentFile?.mkdirs()
+        cacheFile.writeBytes(bytes)
+
+        if (!isPlayableAudioFile(cacheFile)) {
+            cacheFile.delete()
+            throw IllegalStateException("OpenAI speech cache file is not playable: ${cacheFile.absolutePath}")
+        }
+
+        return cacheFile
+    }
+
+    internal fun buildSpeechCacheFile(
+        context: Context,
+        input: String,
+        model: String,
+        voice: String = "alloy",
+        instructions: String = DEFAULT_SPEECH_INSTRUCTIONS,
+        responseFormat: String = "mp3",
+    ): File {
+        val cacheDir = File(context.cacheDir, "openai_tts_cache").apply { mkdirs() }
+        val cacheKey = buildTtsCacheKey(
+            input = input,
+            model = model,
+            voice = voice,
+            instructions = instructions,
+            responseFormat = responseFormat,
+        )
+        val extension = responseFormat.trim().ifBlank { "mp3" }.lowercase(Locale.US)
+        return File(cacheDir, "$cacheKey.$extension")
+    }
+
+    private fun isPlayableAudioFile(file: File): Boolean {
+        if (!file.exists() || !file.isFile || file.length() <= 0L) return false
+        val player = android.media.MediaPlayer()
+        return try {
+            player.setDataSource(file.absolutePath)
+            player.prepare()
+            true
+        } catch (e: Exception) {
+            Log.w(TAG, "Cached OpenAI TTS file is not playable: ${file.absolutePath}", e)
+            false
+        } finally {
+            runCatching { player.release() }
+        }
+    }
+
+    internal fun buildTtsCacheKey(
+        input: String,
+        model: String,
+        voice: String = "alloy",
+        instructions: String = DEFAULT_SPEECH_INSTRUCTIONS,
+        responseFormat: String = "mp3",
+    ): String {
+        val canonicalPayload = listOf(
+            "input=${normalizeCacheText(input)}",
+            "model=${model.trim()}",
+            "voice=${voice.trim()}",
+            "instructions=${normalizeCacheText(instructions)}",
+            "response_format=${responseFormat.trim().ifBlank { "mp3" }.lowercase(Locale.US)}",
+        ).joinToString("|")
+
+        return MessageDigest.getInstance("SHA-256")
+            .digest(canonicalPayload.toByteArray(Charsets.UTF_8))
+            .joinToString(separator = "") { "%02x".format(it) }
+    }
+
+    private fun normalizeCacheText(value: String): String =
+        value.replace(Regex("\\s+"), " ").trim()
+
+    internal fun buildSpeechPayload(
+        model: String,
+        input: String,
+        voice: String = "alloy",
+        instructions: String = DEFAULT_SPEECH_INSTRUCTIONS,
+        responseFormat: String = "mp3",
+    ): JSONObject = JSONObject()
+        .put("model", model.trim())
+        .put("input", input)
+        .put("voice", voice.trim())
+        .put("instructions", instructions)
+        .put("response_format", responseFormat.trim())
+
     /**
      * Health check: tries to reach the server and list models.
      * Returns a human-readable status string.
@@ -178,6 +308,16 @@ object RemoteOpenAiClient {
                 path.isBlank() || path == "/" -> "$clean/v1/chat/completions"
                 else -> "$clean/chat/completions"
             }
+        }
+    }
+
+    internal fun buildSpeechUrl(baseUrl: String): String {
+        val (clean, path) = normalizeBaseUrl(baseUrl)
+        return when {
+            clean.endsWith("/audio/speech") -> clean
+            clean.endsWith("/v1") -> "$clean/audio/speech"
+            path.isBlank() || path == "/" -> "$clean/v1/audio/speech"
+            else -> "$clean/audio/speech"
         }
     }
 
@@ -346,6 +486,31 @@ object RemoteOpenAiClient {
             }
     }
 
+    private fun postBytes(url: String, apiKey: String, payload: JSONObject): ByteArray {
+        val conn = (URL(url).openConnection() as HttpURLConnection)
+        conn.requestMethod = "POST"
+        conn.connectTimeout = CONNECT_TIMEOUT_MS
+        conn.readTimeout = READ_TIMEOUT_MS
+        conn.doOutput = true
+        conn.setRequestProperty("Content-Type", "application/json; charset=utf-8")
+        if (apiKey.isNotBlank()) {
+            conn.setRequestProperty("Authorization", "Bearer $apiKey")
+        }
+        OutputStreamWriter(conn.outputStream, Charsets.UTF_8).use { it.write(payload.toString()) }
+        val code = conn.responseCode
+        val stream = if (code in 200..299) conn.inputStream else conn.errorStream
+        val bytes = stream?.readBytes() ?: ByteArray(0)
+        conn.disconnect()
+        if (code !in 200..299) {
+            val errorText = runCatching { String(bytes, Charsets.UTF_8) }.getOrElse { "" }
+            throw IllegalStateException("Remote speech HTTP $code: ${errorText.take(500)}")
+        }
+        if (bytes.isEmpty()) {
+            throw IllegalStateException("Remote speech request returned an empty response")
+        }
+        return bytes
+    }
+
     private data class EncodedAttachment(
         val base64: String,
         val mimeType: String,
@@ -468,6 +633,8 @@ object RemoteOpenAiClient {
 
         return ""
     }
+
+    const val DEFAULT_SPEECH_INSTRUCTIONS = "Speak in a friendly, calm, natural voice. Keep the message concise, conversational, and confident."
 
     private fun postJsonStreaming(
         url: String,

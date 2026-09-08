@@ -1,12 +1,16 @@
 package com.fersaiyan.cyanbridge.ui
 
 import android.Manifest
+import android.content.Context
 import android.content.Intent
 import android.graphics.BitmapFactory
 import android.media.AudioFormat
+import android.media.AudioManager
 import android.media.AudioRecord
 import android.media.MediaRecorder
+import android.media.MediaPlayer
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -53,8 +57,10 @@ import com.fersaiyan.cyanbridge.localagent.dailysummary.DailySummaryPrefs
 import com.fersaiyan.cyanbridge.localagent.dailysummary.DailySummaryRegenerateWorker
 import com.fersaiyan.cyanbridge.localagent.memory.LocalAgentMemorySearch
 import com.fersaiyan.cyanbridge.localagent.memory.LocalAgentMemoryStore
+import com.fersaiyan.cyanbridge.localagent.AudioSessionCoordinator
 import com.fersaiyan.cyanbridge.localmodels.provider.LocalModelRequestPriority
 import com.fersaiyan.cyanbridge.localmodels.provider.LocalModelsProvider
+import com.fersaiyan.cyanbridge.localmodels.remote.RemoteOpenAiClient
 import com.fersaiyan.cyanbridge.localmodels.remote.RemoteOpenAiPrefs
 import com.fersaiyan.cyanbridge.localmodels.settings.LocalGenerationSettings
 import com.fersaiyan.cyanbridge.localmodels.settings.LocalModelRuntime
@@ -74,6 +80,8 @@ import com.fersaiyan.cyanbridge.shared.chat.ChatThreadStateReducer
 import com.fersaiyan.cyanbridge.shared.chat.ChatThreadUiState
 import com.fersaiyan.cyanbridge.shared.navigation.AppDestination
 import com.fersaiyan.cyanbridge.shared.settings.AgentProviderType
+import com.fersaiyan.cyanbridge.tts.TtsProviderPreferences
+import com.fersaiyan.cyanbridge.tts.TtsProviderType
 import com.fersaiyan.cyanbridge.ui.appearance.AppearancePreferences
 import com.fersaiyan.cyanbridge.ui.appearance.rememberAppearanceSettings
 import com.fersaiyan.cyanbridge.ui.debug.DebugLogSupport
@@ -1011,6 +1019,87 @@ class ChatThreadActivity : AppCompatActivity() {
         return dir
     }
 
+    private fun speakAssistantReply(text: String) {
+        val clean = text.trim()
+        if (clean.isBlank()) return
+
+        if (TtsProviderPreferences.getProvider(this) != TtsProviderType.OPENAI_GPT4O_MINI_TTS) {
+            return
+        }
+
+        lifecycleScope.launch {
+            try {
+                Log.i("ChatThreadActivity", "Assistant chat reply TTS selected provider=${TtsProviderPreferences.getProvider(this@ChatThreadActivity)} model=gpt-4o-mini-tts voice=alloy")
+                val file = withContext(Dispatchers.IO) {
+                    RemoteOpenAiClient.generateSpeechToFile(
+                        context = this@ChatThreadActivity,
+                        input = clean,
+                        model = "gpt-4o-mini-tts",
+                        voice = "alloy",
+                        instructions = RemoteOpenAiClient.DEFAULT_SPEECH_INSTRUCTIONS,
+                        responseFormat = "mp3",
+                    )
+                }
+                val player = MediaPlayer()
+                AudioSessionCoordinator.markBusy()
+                restorePhoneAudioRouteForPlayback("chat assistant OpenAI TTS")
+                player.setAudioAttributes(
+                    android.media.AudioAttributes.Builder()
+                        .setUsage(android.media.AudioAttributes.USAGE_NOTIFICATION)
+                        .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SPEECH)
+                        .build(),
+                )
+                player.setDataSource(file.absolutePath)
+                player.setOnPreparedListener {
+                    Log.i("ChatThreadActivity", "Assistant chat reply TTS prepared file=${file.absolutePath}")
+                    player.start()
+                }
+                player.setOnCompletionListener {
+                    Log.i("ChatThreadActivity", "Assistant chat reply TTS completed file=${file.absolutePath}")
+                    runCatching { player.release() }
+                    AudioSessionCoordinator.markIdle()
+                }
+                player.setOnErrorListener { _, what, extra ->
+                    Log.w("ChatThreadActivity", "Assistant chat reply TTS error what=$what extra=$extra file=${file.absolutePath}")
+                    runCatching { player.release() }
+                    AudioSessionCoordinator.markIdle()
+                    true
+                }
+                player.prepareAsync()
+                Log.i("ChatThreadActivity", "Assistant chat reply TTS queued file=${file.absolutePath}")
+            } catch (t: Throwable) {
+                Log.w("ChatThreadActivity", "Assistant chat reply TTS failed", t)
+                AudioSessionCoordinator.markIdle()
+            }
+        }
+    }
+
+    private fun restorePhoneAudioRouteForPlayback(reason: String) {
+        val audioManager = getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
+        runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                val current = audioManager.communicationDevice
+                if (current != null && (
+                        current.type == android.media.AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
+                            current.type == android.media.AudioDeviceInfo.TYPE_BLE_HEADSET
+                        )) {
+                    audioManager.clearCommunicationDevice()
+                    Log.i("ImageQuestionAudio", "Cleared stale Bluetooth communication route for $reason current=${current.type}:${current.productName}")
+                }
+                val builtInSpeaker = audioManager.availableCommunicationDevices.firstOrNull {
+                    it.type == android.media.AudioDeviceInfo.TYPE_BUILTIN_SPEAKER ||
+                        it.type == android.media.AudioDeviceInfo.TYPE_BUILTIN_EARPIECE
+                }
+                if (builtInSpeaker != null) {
+                    val selected = audioManager.setCommunicationDevice(builtInSpeaker)
+                    Log.i("ImageQuestionAudio", "Restored phone route for $reason device=${builtInSpeaker.type} selected=$selected")
+                }
+            }
+        }.onFailure { e ->
+            Log.w("ImageQuestionAudio", "Could not restore phone route for $reason", e)
+        }
+    }
+
     private fun sendMessage(text: String) {
         val images = pendingImagePaths.toList()
         val audio = pendingAudioPath
@@ -1185,6 +1274,7 @@ class ChatThreadActivity : AppCompatActivity() {
                         content = finalReplyWithCapNotice,
                         nowMs = System.currentTimeMillis(),
                     )
+                    speakAssistantReply(finalReplyWithCapNotice)
                     updateChatThreadState(ChatThreadEvent.GenerationFinished())
 
                     if (requestSmartTitleAfterReply) {

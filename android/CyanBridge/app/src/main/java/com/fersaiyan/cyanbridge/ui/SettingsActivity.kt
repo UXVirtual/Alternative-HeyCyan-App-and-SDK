@@ -1,12 +1,16 @@
 package com.fersaiyan.cyanbridge.ui
 
 import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.media.AudioAttributes
+import android.media.MediaPlayer
 import android.net.Uri
 import android.os.Bundle
 import android.text.InputFilter
 import android.text.InputType
+import android.util.Log
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -33,6 +37,7 @@ import com.fersaiyan.cyanbridge.ai.image.ExternalAssistantAutomationSetupActivit
 import com.fersaiyan.cyanbridge.ai.router.AiProviderPrefs
 import com.fersaiyan.cyanbridge.ai.router.AiProviderType
 import com.fersaiyan.cyanbridge.ai.vision.ImageQuestionPreferences
+import com.fersaiyan.cyanbridge.localmodels.remote.RemoteOpenAiClient
 import com.fersaiyan.cyanbridge.localmodels.session.LocalChatSessionManager
 import com.fersaiyan.cyanbridge.shared.chat.ChatRole
 import com.fersaiyan.cyanbridge.chat.ChatStore
@@ -61,6 +66,8 @@ import com.fersaiyan.cyanbridge.shared.settings.SettingsSection
 import com.fersaiyan.cyanbridge.shared.ui.settings.SettingsScreen
 import com.fersaiyan.cyanbridge.shared.ui.settings.SettingsScreenActions
 import com.fersaiyan.cyanbridge.shared.ui.settings.SettingsUiState
+import com.fersaiyan.cyanbridge.tts.TtsProviderPreferences
+import com.fersaiyan.cyanbridge.tts.TtsProviderType
 import com.fersaiyan.cyanbridge.ui.localization.AppLanguage
 import com.fersaiyan.cyanbridge.ui.localization.AppLanguagePreferences
 import com.fersaiyan.cyanbridge.ui.theme.CyanBridgeTheme
@@ -195,12 +202,16 @@ class SettingsActivity : AppCompatActivity(), SettingsScreenActions {
         val meeting = MeetingCapturePrefs.getState(this)
         val memoryMode = MemoryModeManager.getSelectedMode(this)
         val providerType = AutomationPrefs.getProviderType(this)
+        val ttsProvider = TtsProviderPreferences.getProvider(this)
+        val useCache = TtsProviderPreferences.getUseCache(this)
         val imageQuestionSettings = ImageQuestionPreferences.get(this)
         settingsUiState = SettingsUiState(
             isProSubscribed = ProSubscriptionPrefs.isActiveLocally(this),
             proPlan = formatPlan(ProSubscriptionPrefs.getPlan(this)),
             appLanguageLabel = AppLanguagePreferences.selected(this).displayName(this),
             providerType = providerType,
+            ttsProvider = ttsProvider.wire,
+            useCache = useCache,
             taskerIntegrationsAvailable = true,
             defaultImageQuestion = imageQuestionSettings.defaultQuestion,
             memoryMode = memoryMode,
@@ -297,6 +308,62 @@ class SettingsActivity : AppCompatActivity(), SettingsScreenActions {
             }
         }
         refreshSettingsUi()
+    }
+
+    override fun setAssistantTtsProvider(provider: String) {
+        val mapped = when (provider) {
+            TtsProviderType.OPENAI_GPT4O_MINI_TTS.wire -> TtsProviderType.OPENAI_GPT4O_MINI_TTS
+            else -> TtsProviderType.NATIVE_ANDROID
+        }
+        TtsProviderPreferences.setProvider(this, mapped)
+        refreshSettingsUi()
+    }
+
+    override fun setUseCache(enabled: Boolean) {
+        TtsProviderPreferences.setUseCache(this, enabled)
+        refreshSettingsUi()
+    }
+
+    override fun testAssistantTts() {
+        val sampleText = "This is a test of the OpenAI TTS cache and playback path."
+        lifecycleScope.launch {
+            try {
+                val file = withContext(Dispatchers.IO) {
+                    RemoteOpenAiClient.generateSpeechToFile(
+                        context = this@SettingsActivity,
+                        input = sampleText,
+                        model = "gpt-4o-mini-tts",
+                        voice = "alloy",
+                        instructions = RemoteOpenAiClient.DEFAULT_SPEECH_INSTRUCTIONS,
+                        responseFormat = "mp3",
+                    )
+                }
+                val player = MediaPlayer()
+                player.setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_NOTIFICATION)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                        .build(),
+                )
+                player.setOnPreparedListener {
+                    runCatching { player.start() }
+                }
+                player.setOnCompletionListener {
+                    runCatching { player.release() }
+                }
+                player.setOnErrorListener { _, what, extra ->
+                    Log.w("SettingsActivity", "Test TTS playback failed what=$what extra=$extra file=${file.absolutePath}")
+                    runCatching { player.release() }
+                    true
+                }
+                player.setDataSource(file.absolutePath)
+                player.prepareAsync()
+                Toast.makeText(this@SettingsActivity, "Testing OpenAI TTS…", Toast.LENGTH_SHORT).show()
+            } catch (t: Throwable) {
+                Log.w("SettingsActivity", "Test TTS generation failed", t)
+                Toast.makeText(this@SettingsActivity, "OpenAI TTS test failed: ${t.message ?: "unknown error"}", Toast.LENGTH_LONG).show()
+            }
+        }
     }
 
     override fun openLocalModels() {

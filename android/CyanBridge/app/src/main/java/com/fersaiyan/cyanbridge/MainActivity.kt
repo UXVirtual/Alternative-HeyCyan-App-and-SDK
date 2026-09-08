@@ -124,7 +124,10 @@ import com.fersaiyan.cyanbridge.ui.requestWifiP2pPermission
 import com.fersaiyan.cyanbridge.ui.setOnClickListener
 import com.fersaiyan.cyanbridge.ui.startKtxActivity
 import com.fersaiyan.cyanbridge.ui.debug.DebugLogSupport
+import com.fersaiyan.cyanbridge.localmodels.remote.RemoteOpenAiClient
 import com.fersaiyan.cyanbridge.localmodels.remote.RemoteOpenAiPrefs
+import com.fersaiyan.cyanbridge.tts.TtsProviderPreferences
+import com.fersaiyan.cyanbridge.tts.TtsProviderType
 import com.fersaiyan.cyanbridge.ui.wifi.p2p.WifiP2pManagerSingleton
 import android.net.wifi.p2p.WifiP2pDevice
 import android.net.wifi.p2p.WifiP2pInfo
@@ -343,7 +346,6 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         streamType: Int? = null,
         onDone: (() -> Unit)? = null,
     ) {
-        val engine = tts
         val speechText = StreamingTextNormalizer.normalizeForSpeech(text, languageTag)
         if (speechText.isBlank()) {
             Log.w(TAG, "Skipping blank/markdown-only TTS payload for languageTag=$languageTag")
@@ -351,6 +353,85 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             return
         }
 
+        if (TtsProviderPreferences.getProvider(this) == TtsProviderType.OPENAI_GPT4O_MINI_TTS) {
+            val id = utteranceId ?: "utt_${System.currentTimeMillis()}"
+            val wrappedOnDone: () -> Unit = {
+                try {
+                    onDone?.invoke()
+                } finally {
+                    AudioSessionCoordinator.markIdle()
+                }
+            }
+            ttsDoneCallbacks[id] = wrappedOnDone
+            lifecycleScope.launch {
+                try {
+                    val file = withContext(Dispatchers.IO) {
+                        RemoteOpenAiClient.generateSpeechToFile(
+                            context = this@MainActivity,
+                            input = speechText,
+                            model = "gpt-4o-mini-tts",
+                            voice = "alloy",
+                            instructions = RemoteOpenAiClient.DEFAULT_SPEECH_INSTRUCTIONS,
+                            responseFormat = "mp3",
+                        )
+                    }
+                    val player = android.media.MediaPlayer()
+                    AudioSessionCoordinator.markBusy()
+                    restorePhoneAudioRouteForPlayback("assistant OpenAI TTS")
+                    player.setAudioAttributes(
+                        android.media.AudioAttributes.Builder()
+                            .setUsage(android.media.AudioAttributes.USAGE_NOTIFICATION)
+                            .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SPEECH)
+                            .build(),
+                    )
+                    player.setDataSource(file.absolutePath)
+                    player.setOnPreparedListener {
+                        Log.i(TAG, "OpenAI TTS prepared id=$id file=${file.absolutePath}")
+                        player.start()
+                    }
+                    player.setOnCompletionListener {
+                        runCatching { player.release() }
+                        ttsDoneCallbacks.remove(id)?.invoke()
+                    }
+                    player.setOnErrorListener { _, what, extra ->
+                        Log.w(TAG, "OpenAI TTS playback failed what=$what extra=$extra id=$id")
+                        runCatching { player.release() }
+                        ttsDoneCallbacks.remove(id)?.invoke()
+                        true
+                    }
+                    player.prepareAsync()
+                    Log.i(TAG, "OpenAI TTS playback queued id=$id file=${file.absolutePath}")
+                } catch (e: Exception) {
+                    Log.w(TAG, "OpenAI TTS generation failed; falling back to native Android TTS", e)
+                    ttsDoneCallbacks.remove(id)
+                    val engine = tts
+                    val fallbackBundle = Bundle().apply {
+                        putString(TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID, id)
+                        streamType?.let { putString(TextToSpeech.Engine.KEY_PARAM_STREAM, it.toString()) }
+                    }
+                    languageTag?.takeIf { it.isNotBlank() }?.let { tag ->
+                        val result = engine?.setLanguage(Locale.forLanguageTag(tag))
+                        if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
+                            Log.w(TAG, "Text-to-speech voice unavailable for $tag")
+                        }
+                    }
+                    val ttsAudioAttrs = android.media.AudioAttributes.Builder()
+                        .setUsage(android.media.AudioAttributes.USAGE_NOTIFICATION)
+                        .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SPEECH)
+                        .build()
+                    runCatching { engine?.setAudioAttributes(ttsAudioAttrs) }
+                    restorePhoneAudioRouteForPlayback("assistant TTS fallback")
+                    AudioSessionCoordinator.markBusy()
+                    val result = engine?.speak(speechText, TextToSpeech.QUEUE_FLUSH, fallbackBundle, id)
+                    if (result != TextToSpeech.SUCCESS) {
+                        ttsDoneCallbacks.remove(id)?.invoke()
+                    }
+                }
+            }
+            return
+        }
+
+        val engine = tts
         languageTag?.takeIf { it.isNotBlank() }?.let { tag ->
             val result = engine?.setLanguage(Locale.forLanguageTag(tag))
             if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {

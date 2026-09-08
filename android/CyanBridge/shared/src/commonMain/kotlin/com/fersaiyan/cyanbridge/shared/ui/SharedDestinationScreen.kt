@@ -503,6 +503,9 @@ private class SharedSettingsScreenActions(
     override fun sendDebugLogs() = Unit
     override fun stopMeetingCapture() = Unit
     override fun setProviderType(type: AgentProviderType) = update { it.copy(providerType = type) }
+    override fun setAssistantTtsProvider(provider: String) = update { it.copy(ttsProvider = provider) }
+    override fun setUseCache(enabled: Boolean) = update { it.copy(useCache = enabled) }
+    override fun testAssistantTts() = Unit
     override fun openTaskerIntegrations() = Unit
     override fun openLocalModels() = Unit
 }
@@ -511,6 +514,7 @@ private const val SHARED_SETTINGS_PREFS = "cyanbridge_shared_settings"
 
 private fun loadSharedSettings(preferences: PlatformPreferences): SettingsUiState = SettingsUiState(
     providerType = AgentProviderType.valueOf(preferences.getString("provider_type", AgentProviderType.PRO_SUBSCRIPTION.name)),
+    useCache = preferences.getBoolean("tts_use_cache", true),
     memoryMode = MemoryPrivacyMode.fromRaw(preferences.getString("memory_mode", MemoryPrivacyMode.PRIVATE_LOCAL.name)),
     syncExplicit = preferences.getBoolean("sync_explicit", true),
     syncDaily = preferences.getBoolean("sync_daily", true),

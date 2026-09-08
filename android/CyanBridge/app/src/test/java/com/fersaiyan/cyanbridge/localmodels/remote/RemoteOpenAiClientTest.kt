@@ -1,6 +1,7 @@
 package com.fersaiyan.cyanbridge.localmodels.remote
 
 import com.fersaiyan.cyanbridge.shared.localmodels.RemoteOpenAiApiMode
+import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -117,6 +118,60 @@ class RemoteOpenAiClientTest {
         )
 
         assertEquals("world", RemoteOpenAiClient.extractStreamingText(deltaOnlyPayload))
+    }
+
+    @Test
+    fun openai_speech_payload_uses_expected_tts_fields() {
+        val payload = RemoteOpenAiClient.buildSpeechPayload(
+            model = "gpt-4o-mini-tts",
+            input = "Need a concise answer.",
+            voice = "alloy",
+            instructions = "Speak politely and stay concise.",
+            responseFormat = "mp3",
+        )
+
+        assertEquals("gpt-4o-mini-tts", payload.getString("model"))
+        assertEquals("Need a concise answer.", payload.getString("input"))
+        assertEquals("alloy", payload.getString("voice"))
+        assertEquals("Speak politely and stay concise.", payload.getString("instructions"))
+        assertEquals("mp3", payload.getString("response_format"))
+    }
+
+    @Test
+    fun tts_cache_key_is_stable_and_changes_with_voice_or_instructions() {
+        val first = RemoteOpenAiClient.buildTtsCacheKey(
+            input = "I am listening.",
+            model = "gpt-4o-mini-tts",
+            voice = "alloy",
+            instructions = "Speak warmly.",
+            responseFormat = "mp3",
+        )
+        val same = RemoteOpenAiClient.buildTtsCacheKey(
+            input = "I am listening.",
+            model = "gpt-4o-mini-tts",
+            voice = "alloy",
+            instructions = "Speak warmly.",
+            responseFormat = "mp3",
+        )
+        val differentVoice = RemoteOpenAiClient.buildTtsCacheKey(
+            input = "I am listening.",
+            model = "gpt-4o-mini-tts",
+            voice = "sage",
+            instructions = "Speak warmly.",
+            responseFormat = "mp3",
+        )
+        val differentInstructions = RemoteOpenAiClient.buildTtsCacheKey(
+            input = "I am listening.",
+            model = "gpt-4o-mini-tts",
+            voice = "alloy",
+            instructions = "Speak warmly and slowly.",
+            responseFormat = "mp3",
+        )
+
+        assertEquals(first, same)
+        assertFalse(first == differentVoice)
+        assertFalse(first == differentInstructions)
+        assertTrue(first.matches(Regex("^[a-f0-9]{64}$")))
     }
 
     @Test
