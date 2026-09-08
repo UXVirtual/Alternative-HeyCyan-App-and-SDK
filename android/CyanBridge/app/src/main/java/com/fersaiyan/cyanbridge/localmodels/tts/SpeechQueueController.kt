@@ -162,6 +162,18 @@ class SpeechQueueController(
 
             val bundle = Bundle().apply {
                 putString(TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID, utteranceId)
+                putString(TextToSpeech.Engine.KEY_PARAM_STREAM, AudioManager.STREAM_VOICE_CALL.toString())
+            }
+
+            runCatching {
+                ttsEngine.setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                        .build(),
+                )
+            }.onFailure { e ->
+                Log.w(TAG, "Could not configure TTS voice communication audio attributes for session=${item.sessionId}", e)
             }
 
             val queueMode = if (item.sequence == 0) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD

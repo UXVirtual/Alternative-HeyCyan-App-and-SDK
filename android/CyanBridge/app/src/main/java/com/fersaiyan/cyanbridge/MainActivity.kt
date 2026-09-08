@@ -251,6 +251,7 @@ import com.fersaiyan.cyanbridge.localagent.memory.LocalAgentMemoryStore
 import com.fersaiyan.cyanbridge.localagent.userfacts.CandidateUserFactsStorage
 import com.fersaiyan.cyanbridge.localmodels.provider.LocalModelsProvider
 import com.fersaiyan.cyanbridge.localmodels.tts.StreamingSpeechSessionManager
+import com.fersaiyan.cyanbridge.localmodels.tts.StreamingTextNormalizer
 import com.fersaiyan.cyanbridge.localmodels.settings.LocalModelRuntime
 import com.fersaiyan.cyanbridge.localmodels.settings.LocalModelSettingsRepository
 import com.fersaiyan.cyanbridge.localmodels.storage.LocalModelStorageRepository
@@ -343,6 +344,13 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         onDone: (() -> Unit)? = null,
     ) {
         val engine = tts
+        val speechText = StreamingTextNormalizer.normalizeForSpeech(text, languageTag)
+        if (speechText.isBlank()) {
+            Log.w(TAG, "Skipping blank/markdown-only TTS payload for languageTag=$languageTag")
+            onDone?.invoke()
+            return
+        }
+
         languageTag?.takeIf { it.isNotBlank() }?.let { tag ->
             val result = engine?.setLanguage(Locale.forLanguageTag(tag))
             if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
@@ -366,10 +374,10 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         }
 
         AudioSessionCoordinator.markBusy()
-        val result = engine?.speak(text, TextToSpeech.QUEUE_FLUSH, bundle, id)
+        val result = engine?.speak(speechText, TextToSpeech.QUEUE_FLUSH, bundle, id)
         Log.i(
             "ImageQuestionAudio",
-            "TTS enqueue id=$id ready=$ttsReady stream=$streamType textLength=${text.length} result=$result",
+            "TTS enqueue id=$id ready=$ttsReady stream=$streamType textLength=${speechText.length} result=$result",
         )
         if (result != TextToSpeech.SUCCESS) {
             // No progress callback is delivered when enqueueing fails (including when the
