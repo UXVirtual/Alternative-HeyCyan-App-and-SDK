@@ -5343,15 +5343,36 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         Log.i("ImageQuestionAudio", "Configured TTS voice-communication audio reason=$reason result=$result")
     }
 
-    private fun restorePhoneAudioRouteForPlayback(reason: String) {
-        val audioManager = getSystemService(Context.AUDIO_SERVICE) as? android.media.AudioManager ?: return
+    private fun clearStaleBluetoothAudioRoute(audioManager: android.media.AudioManager, reason: String) {
         runCatching {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                // Clear the active communication-device binding before speaker playback. Some headsets
-                // (including glasses connected as BLE/Bluetooth audio devices) keep the route pinned
-                // even after the app tries to restore the phone speaker; this makes TTS disappear
-                // silently while the mic still works.
-                audioManager.clearCommunicationDevice()
+                val current = audioManager.communicationDevice
+                if (current != null && (
+                        current.type == android.media.AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
+                            current.type == android.media.AudioDeviceInfo.TYPE_BLE_HEADSET
+                        )) {
+                    audioManager.clearCommunicationDevice()
+                    Log.i("ImageQuestionAudio", "Cleared stale Bluetooth communication route for $reason current=${current.type}:${current.productName}")
+                }
+            }
+            @Suppress("DEPRECATION")
+            if (audioManager.isBluetoothScoOn) {
+                @Suppress("DEPRECATION")
+                audioManager.stopBluetoothSco()
+                @Suppress("DEPRECATION")
+                audioManager.isBluetoothScoOn = false
+            }
+            audioManager.mode = android.media.AudioManager.MODE_NORMAL
+        }.onFailure { e ->
+            Log.w("ImageQuestionAudio", "Could not clear stale Bluetooth route for $reason", e)
+        }
+    }
+
+    private fun restorePhoneAudioRouteForPlayback(reason: String) {
+        val audioManager = getSystemService(Context.AUDIO_SERVICE) as? android.media.AudioManager ?: return
+        clearStaleBluetoothAudioRoute(audioManager, reason)
+        runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 val builtInSpeaker = audioManager.availableCommunicationDevices.firstOrNull {
                     it.type == android.media.AudioDeviceInfo.TYPE_BUILTIN_SPEAKER ||
                         it.type == android.media.AudioDeviceInfo.TYPE_BUILTIN_EARPIECE
@@ -5364,11 +5385,6 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                     )
                 }
             }
-            @Suppress("DEPRECATION")
-            audioManager.isBluetoothScoOn = false
-            @Suppress("DEPRECATION")
-            audioManager.stopBluetoothSco()
-            audioManager.mode = android.media.AudioManager.MODE_NORMAL
         }.onFailure { e ->
             Log.w("ImageQuestionAudio", "Could not restore phone route for $reason", e)
         }
@@ -5377,6 +5393,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private fun startBluetoothMicRoute(audioManager: android.media.AudioManager) {
         runCatching {
             Log.i("ImageQuestionAudio", "Selecting Bluetooth microphone route: ${audioRouteSummary(audioManager)}")
+            clearStaleBluetoothAudioRoute(audioManager, "before Bluetooth mic route")
             audioManager.mode = android.media.AudioManager.MODE_IN_COMMUNICATION
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 val device = audioManager.availableCommunicationDevices.firstOrNull {
