@@ -270,6 +270,14 @@ fun LocalModelsConfigureScreen(
                             onAction(LocalModelsAction.UpdateText(LocalModelTextField.REMOTE_API_KEY, it))
                         },
                     )
+                    ChoiceField(
+                        label = "OpenAI API mode",
+                        value = remote.apiModeOptions.getOrNull(remote.apiModeIndex).orEmpty(),
+                        options = remote.apiModeOptions,
+                        onSelected = {
+                            onAction(LocalModelsAction.SelectOption(LocalModelOptionField.REMOTE_API_MODE, it))
+                        },
+                    )
                     ActionRow(
                         primaryLabel = "Test connection",
                         onPrimary = { onAction(LocalModelsAction.TestRemoteServer) },

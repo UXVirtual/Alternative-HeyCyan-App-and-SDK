@@ -11,6 +11,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import android.view.View
 import android.webkit.MimeTypeMap
 import androidx.activity.compose.setContent
 import androidx.core.content.ContextCompat
@@ -27,6 +28,7 @@ import androidx.work.ExistingWorkPolicy
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import com.fersaiyan.cyanbridge.MainActivity
+import com.google.android.material.snackbar.Snackbar
 import com.fersaiyan.cyanbridge.agent.LocalAgentPrefs as AutomationPrefs
 import com.fersaiyan.cyanbridge.agent.LocalModelsConfigureActivity
 import com.fersaiyan.cyanbridge.agent.ProSubscriptionAiPrefs
@@ -672,7 +674,16 @@ class ChatThreadActivity : AppCompatActivity() {
 
     private fun showRelayDownToastIfNeeded(message: String?) {
         val hint = ProSubscriptionRelayClient.relayUnavailableHintFromText(message.orEmpty()) ?: return
-        android.widget.Toast.makeText(this, hint, android.widget.Toast.LENGTH_LONG).show()
+        showPersistentError(hint)
+    }
+
+    private fun showPersistentError(message: String, tag: String = "ChatThreadActivity") {
+        val safeMessage = message.ifBlank { "Unknown error" }
+        Log.e(tag, safeMessage)
+        val rootView: View = findViewById(android.R.id.content)
+        val snackbar = Snackbar.make(rootView, safeMessage, Snackbar.LENGTH_INDEFINITE)
+        snackbar.setAction("Dismiss") { snackbar.dismiss() }
+        snackbar.show()
     }
 
     private fun hasLocalModelAvailable(): Boolean {
@@ -1138,6 +1149,9 @@ class ChatThreadActivity : AppCompatActivity() {
                                 override fun onToken(token: String) {
                                     runOnUiThread {
                                         val current = chatThreadUiState.streamingAssistantText.orEmpty()
+                                        if (token.isNotBlank() && current.isNotBlank() && current.endsWith(token)) {
+                                            return@runOnUiThread
+                                        }
                                         updateChatThreadState(ChatThreadEvent.StreamUpdated(current + token))
                                     }
                                 }
@@ -1205,7 +1219,8 @@ class ChatThreadActivity : AppCompatActivity() {
                     android.widget.Toast.LENGTH_SHORT,
                 ).show()
             } catch (t: Throwable) {
-                Log.e("ChatThreadActivity", "Assistant generation failed", t)
+                val errorMessage = t.message ?: "Failed to get response"
+                Log.e("ChatThreadActivity", "Assistant generation failed: $errorMessage", t)
                 if (useLocalStreaming && DebugLogSupport.isLocalRuntimeIssue(t.message, t)) {
                     DebugLogSupport.showSupportOptionsDialog(
                         activity = this@ChatThreadActivity,
@@ -1219,12 +1234,8 @@ class ChatThreadActivity : AppCompatActivity() {
                         ),
                     )
                 }
-                showRelayDownToastIfNeeded(t.message)
-                android.widget.Toast.makeText(
-                    this@ChatThreadActivity,
-                    t.message ?: "Failed to get response",
-                    android.widget.Toast.LENGTH_SHORT
-                ).show()
+                showRelayDownToastIfNeeded(errorMessage)
+                showPersistentError(errorMessage)
             } finally {
                 localGenerationRunning = false
                 updateChatThreadState(ChatThreadEvent.GenerationFinished())
@@ -1299,6 +1310,9 @@ class ChatThreadActivity : AppCompatActivity() {
                                 override fun onToken(token: String) {
                                     runOnUiThread {
                                         val current = chatThreadUiState.streamingAssistantText.orEmpty()
+                                        if (token.isNotBlank() && current.isNotBlank() && current.endsWith(token)) {
+                                            return@runOnUiThread
+                                        }
                                         updateChatThreadState(ChatThreadEvent.StreamUpdated(current + token))
                                     }
                                 }

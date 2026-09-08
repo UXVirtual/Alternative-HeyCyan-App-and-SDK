@@ -49,7 +49,9 @@ import com.fersaiyan.cyanbridge.shared.localmodels.LocalModelsAction
 import com.fersaiyan.cyanbridge.shared.localmodels.LocalModelsConfigureUiState
 import com.fersaiyan.cyanbridge.shared.localmodels.LocalModelsSection
 import com.fersaiyan.cyanbridge.shared.localmodels.RemoteInferenceUiState
+import com.fersaiyan.cyanbridge.shared.localmodels.RemoteOpenAiApiMode
 import com.fersaiyan.cyanbridge.shared.localmodels.StudioBridgeUiState
+import com.fersaiyan.cyanbridge.shared.localmodels.remoteOpenAiApiModeOptions
 import com.fersaiyan.cyanbridge.shared.ui.localmodels.LocalModelsConfigureScreen
 import com.fersaiyan.cyanbridge.ui.MyApplication
 import com.fersaiyan.cyanbridge.ui.appearance.AppearancePreferences
@@ -258,6 +260,8 @@ class LocalModelsConfigureActivity : AppCompatActivity() {
                 baseUrl = remoteDraft.baseUrl,
                 modelName = remoteDraft.model,
                 apiKey = remoteDraft.apiKey,
+                apiModeOptions = remoteOpenAiApiModeOptions(),
+                apiModeIndex = remoteDraft.apiMode.ordinal,
                 status = remoteDraft.status,
             ),
             studioBridge = StudioBridgeUiState(
@@ -291,6 +295,7 @@ class LocalModelsConfigureActivity : AppCompatActivity() {
             baseUrl = RemoteOpenAiPrefs.getBaseUrl(this),
             model = RemoteOpenAiPrefs.getModel(this),
             apiKey = RemoteOpenAiPrefs.getApiKey(this),
+            apiMode = RemoteOpenAiPrefs.getApiMode(this),
             status = if (RemoteOpenAiPrefs.isActive(this)) {
                 "Active: ${RemoteOpenAiPrefs.getModel(this)} @ ${RemoteOpenAiPrefs.getBaseUrl(this)}"
             } else "",
@@ -368,6 +373,11 @@ class LocalModelsConfigureActivity : AppCompatActivity() {
                 )
             }
             LocalModelOptionField.TEMPLATE -> generationDraft = generationDraft.copy(templateIndex = index)
+            LocalModelOptionField.REMOTE_API_MODE -> {
+                remoteDraft = remoteDraft.copy(
+                    apiMode = RemoteOpenAiApiMode.entries.getOrElse(index) { RemoteOpenAiApiMode.CHAT_COMPLETIONS },
+                )
+            }
         }
         hasUnsavedChanges = true
         refreshComposeState()
@@ -669,9 +679,10 @@ class LocalModelsConfigureActivity : AppCompatActivity() {
         RemoteOpenAiPrefs.setBaseUrl(this, url)
         RemoteOpenAiPrefs.setModel(this, model)
         RemoteOpenAiPrefs.setApiKey(this, key)
+        RemoteOpenAiPrefs.setApiMode(this, remoteDraft.apiMode)
         RemoteOpenAiPrefs.setEnabled(this, remoteDraft.enabled)
         remoteDraft = remoteDraft.copy(
-            status = if (remoteDraft.enabled) "Active: $model @ $url" else "Saved (disabled)",
+            status = if (remoteDraft.enabled) "Active: $model @ $url (${remoteDraft.apiMode.label})" else "Saved (disabled)",
         )
         studioDraft = studioDraft.copy(apiKey = key)
         hasUnsavedChanges = false
@@ -879,6 +890,7 @@ class LocalModelsConfigureActivity : AppCompatActivity() {
         val baseUrl: String = "",
         val model: String = "",
         val apiKey: String = "",
+        val apiMode: RemoteOpenAiApiMode = RemoteOpenAiApiMode.CHAT_COMPLETIONS,
         val status: String = "",
     )
 

@@ -20,8 +20,7 @@ adb -d wait-for-device
 echo "==> Stopping stale Gradle daemons"
 ./gradlew --stop || true
 
-echo "==> Uninstalling any existing app version to avoid downgrade conflicts"
-adb uninstall com.fersaiyan.cyanbridge || adb shell pm uninstall --user 0 com.fersaiyan.cyanbridge || true
-
-echo "==> Building and installing APK to connected device"
+echo "==> Installing updated APK without wiping app data"
+# Do not uninstall here: that clears /data/data/com.fersaiyan.cyanbridge and
+# resets all SharedPreferences and encrypted app state between deployments.
 ./gradlew :app:installDebug --no-daemon --console=plain

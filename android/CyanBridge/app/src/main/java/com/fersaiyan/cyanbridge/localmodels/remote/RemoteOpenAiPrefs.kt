@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
+import com.fersaiyan.cyanbridge.shared.localmodels.RemoteOpenAiApiMode
 import java.net.URI
 
 /**
@@ -20,6 +21,7 @@ object RemoteOpenAiPrefs {
     private const val KEY_BASE_URL = "base_url"
     private const val KEY_API_KEY = "api_key"
     private const val KEY_MODEL = "model"
+    private const val KEY_API_MODE = "api_mode"
     private const val KEY_ENABLED = "enabled"
     private const val KEY_BRIDGE_ENABLED = "studio_bridge_enabled"
 
@@ -74,6 +76,20 @@ object RemoteOpenAiPrefs {
 
     fun setModel(context: Context, model: String) {
         prefs(context).edit().putString(KEY_MODEL, model.trim()).apply()
+    }
+
+    fun getApiMode(context: Context): RemoteOpenAiApiMode {
+        return prefs(context)
+            .getString(KEY_API_MODE, null)
+            ?.let { value ->
+                RemoteOpenAiApiMode.entries.firstOrNull { it.name.equals(value, ignoreCase = true) }
+                    ?: RemoteOpenAiApiMode.CHAT_COMPLETIONS
+            }
+            ?: RemoteOpenAiApiMode.CHAT_COMPLETIONS
+    }
+
+    fun setApiMode(context: Context, mode: RemoteOpenAiApiMode) {
+        prefs(context).edit().putString(KEY_API_MODE, mode.name).apply()
     }
 
     /** Whether the remote server is enabled as the active local-model backend. */

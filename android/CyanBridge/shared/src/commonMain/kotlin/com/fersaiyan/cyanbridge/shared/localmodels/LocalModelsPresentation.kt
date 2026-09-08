@@ -79,6 +79,8 @@ data class RemoteInferenceUiState(
     val baseUrl: String = "",
     val modelName: String = "",
     val apiKey: String = "",
+    val apiModeOptions: List<String> = emptyList(),
+    val apiModeIndex: Int = 0,
     val status: String = "",
 )
 
@@ -118,6 +120,7 @@ enum class LocalModelOptionField {
     COMPUTE_BACKEND,
     MTP_MODE,
     TEMPLATE,
+    REMOTE_API_MODE,
 }
 
 enum class LocalModelToggleField {

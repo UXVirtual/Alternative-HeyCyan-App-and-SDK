@@ -2,6 +2,7 @@ package com.fersaiyan.cyanbridge.localmodels.remote
 
 import android.content.Context
 import android.util.Log
+import com.fersaiyan.cyanbridge.shared.localmodels.RemoteOpenAiApiMode
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.BufferedReader
@@ -41,6 +42,7 @@ object RemoteOpenAiClient {
         val baseUrl = RemoteOpenAiPrefs.getBaseUrl(context)
         val apiKey = RemoteOpenAiPrefs.getApiKey(context)
         val model = RemoteOpenAiPrefs.getModel(context)
+        val apiMode = RemoteOpenAiPrefs.getApiMode(context)
 
         require(baseUrl.isNotBlank()) { "Remote server base URL is not configured" }
         require(model.isNotBlank()) { "Remote server model name is not configured" }
@@ -55,10 +57,11 @@ object RemoteOpenAiClient {
             temperature = temperature,
             imagePaths = imagePaths,
             audioPath = audioPath,
+            apiMode = apiMode,
         )
 
-        val url = buildChatCompletionsUrl(baseUrl)
-        Log.i(TAG, "chatCompletion -> $url model=$model")
+        val url = buildRequestUrl(baseUrl, apiMode)
+        Log.i(TAG, "chatCompletion -> $url model=$model apiMode=${apiMode.name}")
 
         return postJson(url, apiKey, payload)
             .let { response ->
@@ -87,6 +90,7 @@ object RemoteOpenAiClient {
         val baseUrl = RemoteOpenAiPrefs.getBaseUrl(context)
         val apiKey = RemoteOpenAiPrefs.getApiKey(context)
         val model = RemoteOpenAiPrefs.getModel(context)
+        val apiMode = RemoteOpenAiPrefs.getApiMode(context)
 
         require(baseUrl.isNotBlank()) { "Remote server base URL is not configured" }
         require(model.isNotBlank()) { "Remote server model name is not configured" }
@@ -102,10 +106,11 @@ object RemoteOpenAiClient {
             stream = true,
             imagePaths = imagePaths,
             audioPath = audioPath,
+            apiMode = apiMode,
         )
 
-        val url = buildChatCompletionsUrl(baseUrl)
-        Log.i(TAG, "chatCompletionStreaming -> $url model=$model")
+        val url = buildRequestUrl(baseUrl, apiMode)
+        Log.i(TAG, "chatCompletionStreaming -> $url model=$model apiMode=${apiMode.name}")
 
         return postJsonStreaming(url, apiKey, payload, onToken)
     }
@@ -158,15 +163,25 @@ object RemoteOpenAiClient {
         }
     }
 
-    internal fun buildChatCompletionsUrl(baseUrl: String): String {
+    internal fun buildRequestUrl(baseUrl: String, apiMode: RemoteOpenAiApiMode = RemoteOpenAiApiMode.CHAT_COMPLETIONS): String {
         val (clean, path) = normalizeBaseUrl(baseUrl)
-        return when {
-            clean.endsWith("/chat/completions") -> clean
-            clean.endsWith("/v1") -> "$clean/chat/completions"
-            path.isBlank() || path == "/" -> "$clean/v1/chat/completions"
-            else -> "$clean/chat/completions"
+        return when (apiMode) {
+            RemoteOpenAiApiMode.RESPONSES -> when {
+                clean.endsWith("/responses") -> clean
+                clean.endsWith("/v1") -> "$clean/responses"
+                path.isBlank() || path == "/" -> "$clean/v1/responses"
+                else -> "$clean/responses"
+            }
+            RemoteOpenAiApiMode.CHAT_COMPLETIONS -> when {
+                clean.endsWith("/chat/completions") -> clean
+                clean.endsWith("/v1") -> "$clean/chat/completions"
+                path.isBlank() || path == "/" -> "$clean/v1/chat/completions"
+                else -> "$clean/chat/completions"
+            }
         }
     }
+
+    internal fun buildChatCompletionsUrl(baseUrl: String): String = buildRequestUrl(baseUrl, RemoteOpenAiApiMode.CHAT_COMPLETIONS)
 
     internal fun buildModelsUrl(baseUrl: String): String {
         val (normalized, _) = normalizeBaseUrl(baseUrl)
@@ -207,6 +222,7 @@ object RemoteOpenAiClient {
         stream: Boolean = false,
         imagePaths: List<String> = emptyList(),
         audioPath: String? = null,
+        apiMode: RemoteOpenAiApiMode = RemoteOpenAiApiMode.CHAT_COMPLETIONS,
     ): JSONObject {
         require(model.isNotBlank()) { "Remote server model name is not configured" }
         require(maxTokens > 0) { "maxTokens must be greater than zero" }
@@ -259,6 +275,65 @@ object RemoteOpenAiClient {
                 jsonMessage.put("content", contentParts)
             }
             messagesArray.put(jsonMessage)
+        }
+
+        if (apiMode == RemoteOpenAiApiMode.RESPONSES) {
+            val input = JSONArray()
+            val targetUserIndex = messages.indexOfLast {
+                it["role"]?.trim()?.lowercase(Locale.US).let { role ->
+                    role.isNullOrBlank() || role == "user"
+                }
+            }
+            val shouldAttachMedia = hasMedia && targetUserIndex >= 0
+
+            messages.forEachIndexed { index, message ->
+                val role = message["role"]?.trim()?.lowercase(Locale.US)?.ifBlank { "user" } ?: "user"
+                val text = message["content"].orEmpty().trim()
+
+                val contentValue = if (shouldAttachMedia && index == targetUserIndex) {
+                    val parts = JSONArray()
+                    if (text.isNotBlank()) {
+                        parts.put(JSONObject().put("type", "input_text").put("text", text))
+                    }
+
+                    imagePaths.forEach { path ->
+                        val image = readAttachment(File(requireAttachmentPath(path, "image")), "image")
+                        parts.put(
+                            JSONObject()
+                                .put("type", "input_image")
+                                .put("image_url", "data:${image.mimeType};base64,${image.base64}"),
+                        )
+                    }
+
+                    if (hasAudio) {
+                        val audioFile = File(requireAttachmentPath(audioPath.orEmpty(), "audio"))
+                        val audio = readAttachment(audioFile, "audio")
+                        parts.put(
+                            JSONObject()
+                                .put("type", "input_audio")
+                                .put("input_audio", JSONObject().put("data", audio.base64).put("format", audio.mimeType)),
+                        )
+                    }
+
+                    parts
+                } else {
+                    text
+                }
+
+                val item = JSONObject().put("role", role)
+                if (contentValue is String) {
+                    item.put("content", contentValue)
+                } else if (contentValue is JSONArray) {
+                    item.put("content", contentValue)
+                }
+                input.put(item)
+            }
+            return JSONObject()
+                .put("model", model.trim())
+                .put("input", input)
+                .put("max_output_tokens", maxTokens)
+                .put("temperature", temperature)
+                .apply { if (stream) put("stream", true) }
         }
 
         return JSONObject()
@@ -342,6 +417,58 @@ object RemoteOpenAiClient {
     /**
      * Streaming POST: reads SSE lines (`data: {...}`) and extracts content deltas.
      */
+    internal fun extractStreamingText(payload: JSONObject): String {
+        val choices = payload.optJSONArray("choices")
+        if (choices != null) {
+            for (i in 0 until choices.length()) {
+                val delta = choices.optJSONObject(i)?.optJSONObject("delta")
+                val text = delta?.optString("content", "") ?: ""
+                if (text.isNotBlank()) return text
+            }
+        }
+
+        val messageDelta = payload.optJSONObject("delta")?.optString("content", "") ?: ""
+        if (messageDelta.isNotBlank()) return messageDelta
+
+        val directDelta = payload.optString("delta", "")
+        if (directDelta.isNotBlank()) return directDelta
+
+        val directText = payload.optString("text", "")
+        if (directText.isNotBlank()) return directText
+
+        val output = payload.optJSONArray("output")
+        if (output != null) {
+            for (i in 0 until output.length()) {
+                val item = output.optJSONObject(i) ?: continue
+                val contentList = item.optJSONArray("content")
+                if (contentList != null) {
+                    for (j in 0 until contentList.length()) {
+                        val part = contentList.optJSONObject(j) ?: continue
+                        val partText = part.optString("text", "")
+                        if (partText.isNotBlank()) return partText
+                        val deltaText = part.optString("delta", "")
+                        if (deltaText.isNotBlank()) return deltaText
+                    }
+                }
+                val itemText = item.optString("text", "")
+                if (itemText.isNotBlank()) return itemText
+            }
+        }
+
+        val contentArray = payload.optJSONArray("content")
+        if (contentArray != null) {
+            for (i in 0 until contentArray.length()) {
+                val part = contentArray.optJSONObject(i) ?: continue
+                val partText = part.optString("text", "")
+                if (partText.isNotBlank()) return partText
+                val deltaText = part.optString("delta", "")
+                if (deltaText.isNotBlank()) return deltaText
+            }
+        }
+
+        return ""
+    }
+
     private fun postJsonStreaming(
         url: String,
         apiKey: String,
@@ -380,12 +507,14 @@ object RemoteOpenAiClient {
 
                 val chunk = runCatching {
                     val obj = JSONObject(data)
-                    val choices = obj.optJSONArray("choices") ?: return@runCatching ""
-                    val delta = choices.optJSONObject(0)?.optJSONObject("delta") ?: return@runCatching ""
-                    delta.optString("content", "")
+                    extractStreamingText(obj)
                 }.getOrDefault("")
 
                 if (chunk.isNotBlank()) {
+                    val accumulated = result.toString()
+                    if (accumulated.isNotBlank() && accumulated.endsWith(chunk)) {
+                        continue
+                    }
                     result.append(chunk)
                     onToken?.invoke(chunk)
                 }

@@ -1,5 +1,6 @@
 package com.fersaiyan.cyanbridge.localmodels.remote
 
+import com.fersaiyan.cyanbridge.shared.localmodels.RemoteOpenAiApiMode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -42,6 +43,80 @@ class RemoteOpenAiClientTest {
             "http://desktop.tailnet.ts.net:8080/v1/models",
             RemoteOpenAiClient.buildModelsUrl("http://desktop.tailnet.ts.net:8080/v1/chat/completions"),
         )
+    }
+
+    @Test
+    fun responses_api_uses_responses_endpoint_and_input_schema() {
+        assertEquals(
+            "https://api.openai.com/v1/responses",
+            RemoteOpenAiClient.buildRequestUrl("https://api.openai.com/v1", RemoteOpenAiApiMode.RESPONSES),
+        )
+        assertEquals(
+            "https://api.openai.com/v1/chat/completions",
+            RemoteOpenAiClient.buildRequestUrl("https://api.openai.com/v1", RemoteOpenAiApiMode.CHAT_COMPLETIONS),
+        )
+
+        val payload = RemoteOpenAiClient.buildChatCompletionPayload(
+            model = "gpt-5.4-mini",
+            messages = listOf(mapOf("role" to "user", "content" to "Say hi")),
+            maxTokens = 64,
+            temperature = 0.2,
+            apiMode = RemoteOpenAiApiMode.RESPONSES,
+        )
+
+        assertTrue(payload.has("input"))
+        assertFalse(payload.has("messages"))
+        assertEquals("gpt-5.4-mini", payload.getString("model"))
+    }
+
+    @Test
+    fun responses_api_lowercases_message_roles_to_match_openai_schema() {
+        val payload = RemoteOpenAiClient.buildChatCompletionPayload(
+            model = "gpt-5.4-mini",
+            messages = listOf(
+                mapOf("role" to "System", "content" to "You are helpful"),
+                mapOf("role" to "User", "content" to "Say hi"),
+            ),
+            maxTokens = 64,
+            temperature = 0.2,
+            apiMode = RemoteOpenAiApiMode.RESPONSES,
+        )
+
+        val input = payload.getJSONArray("input")
+        assertEquals("system", input.getJSONObject(0).getString("role"))
+        assertEquals("user", input.getJSONObject(1).getString("role"))
+    }
+
+    @Test
+    fun responses_streaming_payloads_are_parsed_from_output_text_delta_events() {
+        val payload = JSONObject(
+            """
+            {
+              "type": "response.output_text.delta",
+              "delta": "hello",
+              "output": [
+                {
+                  "content": [
+                    {"type": "output_text", "text": "hello"}
+                  ]
+                }
+              ]
+            }
+            """.trimIndent(),
+        )
+
+        assertEquals("hello", RemoteOpenAiClient.extractStreamingText(payload))
+
+        val deltaOnlyPayload = JSONObject(
+            """
+            {
+              "type": "response.output_text.delta",
+              "delta": "world"
+            }
+            """.trimIndent(),
+        )
+
+        assertEquals("world", RemoteOpenAiClient.extractStreamingText(deltaOnlyPayload))
     }
 
     @Test
