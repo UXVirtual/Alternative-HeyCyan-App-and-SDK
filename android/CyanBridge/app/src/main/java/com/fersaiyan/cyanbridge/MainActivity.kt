@@ -373,6 +373,14 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             streamType?.let { putString(TextToSpeech.Engine.KEY_PARAM_STREAM, it.toString()) }
         }
 
+        // Force the engine off the active Bluetooth communication route before speech. When the
+        // glasses are connected as a communication device, the TTS engine can silently stop
+        // playing on the phone speaker even though the mic still works normally.
+        val ttsAudioAttrs = android.media.AudioAttributes.Builder()
+            .setUsage(android.media.AudioAttributes.USAGE_NOTIFICATION)
+            .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SPEECH)
+            .build()
+        runCatching { engine?.setAudioAttributes(ttsAudioAttrs) }
         restorePhoneAudioRouteForPlayback("assistant TTS")
         AudioSessionCoordinator.markBusy()
         val result = engine?.speak(speechText, TextToSpeech.QUEUE_FLUSH, bundle, id)
@@ -5339,6 +5347,11 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         val audioManager = getSystemService(Context.AUDIO_SERVICE) as? android.media.AudioManager ?: return
         runCatching {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                // Clear the active communication-device binding before speaker playback. Some headsets
+                // (including glasses connected as BLE/Bluetooth audio devices) keep the route pinned
+                // even after the app tries to restore the phone speaker; this makes TTS disappear
+                // silently while the mic still works.
+                audioManager.clearCommunicationDevice()
                 val builtInSpeaker = audioManager.availableCommunicationDevices.firstOrNull {
                     it.type == android.media.AudioDeviceInfo.TYPE_BUILTIN_SPEAKER ||
                         it.type == android.media.AudioDeviceInfo.TYPE_BUILTIN_EARPIECE
@@ -5349,15 +5362,12 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                         "ImageQuestionAudio",
                         "Restored phone route for $reason device=${builtInSpeaker.type} selected=$selected",
                     )
-                } else {
-                    audioManager.clearCommunicationDevice()
                 }
-            } else {
-                @Suppress("DEPRECATION")
-                audioManager.isBluetoothScoOn = false
-                @Suppress("DEPRECATION")
-                audioManager.stopBluetoothSco()
             }
+            @Suppress("DEPRECATION")
+            audioManager.isBluetoothScoOn = false
+            @Suppress("DEPRECATION")
+            audioManager.stopBluetoothSco()
             audioManager.mode = android.media.AudioManager.MODE_NORMAL
         }.onFailure { e ->
             Log.w("ImageQuestionAudio", "Could not restore phone route for $reason", e)
