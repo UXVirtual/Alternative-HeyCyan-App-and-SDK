@@ -131,13 +131,21 @@ object ChatThreadStateReducer {
         streamingAssistantText: String?,
         nowMs: Long,
     ): List<ChatMessage> {
-        if (streamingAssistantText == null) return messages
+        val streamText = streamingAssistantText?.trim().orEmpty()
+        if (streamText.isBlank()) return messages
+
+        val normalizedStream = streamText.replace(Regex("\\s+"), " ").trim()
+        val alreadyPersisted = messages.any { message ->
+            message.role == ChatRole.ASSISTANT &&
+                message.content.replace(Regex("\\s+"), " ").trim() == normalizedStream
+        }
+        if (alreadyPersisted) return messages
 
         return messages + ChatMessage(
             id = "streaming-$chatId",
             chatId = chatId,
             role = ChatRole.ASSISTANT,
-            content = streamingAssistantText.ifBlank { "..." },
+            content = streamText.ifBlank { "..." },
             createdAt = nowMs,
         )
     }

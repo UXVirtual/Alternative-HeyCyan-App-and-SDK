@@ -87,6 +87,21 @@ class AppearanceModelsTest {
     }
 
     @Test
+    fun visibleMessagesDoesNotDuplicateAnAlreadyPersistedAssistantReply() {
+        val user = ChatMessage("message-1", "chat-1", ChatRole.USER, "Hello", 1000L)
+        val assistant = ChatMessage("message-2", "chat-1", ChatRole.ASSISTANT, "Final reply", 1100L)
+        val visible = ChatThreadStateReducer.visibleMessages(
+            messages = listOf(user, assistant),
+            chatId = "chat-1",
+            streamingAssistantText = "Final reply",
+            nowMs = 1200L,
+        )
+
+        assertEquals(2, visible.size)
+        assertEquals(listOf("Hello", "Final reply"), visible.map { it.content })
+    }
+
+    @Test
     fun bridgeCommandsAndBootstrapArePortable() {
         val command = DisplayCommand.Text("Ready", DisplayPriority.HIGH)
 
