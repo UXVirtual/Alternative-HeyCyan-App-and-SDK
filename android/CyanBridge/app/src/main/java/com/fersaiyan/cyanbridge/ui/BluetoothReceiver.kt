@@ -63,21 +63,26 @@ class BluetoothReceiver : BroadcastReceiver() {
                     Log.w("BluetoothReceiver", "Ignoring ACL connection without BLUETOOTH_CONNECT")
                     return
                 }
-                // If the phone connects to the glasses over classic BT (audio),
-                // opportunistically (re)connect the BLE control channel too.
                 val device = intent.getParcelableExtra<BluetoothDevice>(BluetoothDevice.EXTRA_DEVICE)
-                if (device != null) {
-                    val saved = if (DeviceProfileStore.isMetaSelected(context)) {
-                        null
-                    } else {
-                        DeviceManager.getInstance().deviceAddress
-                    }
-                    val name = try { device.name } catch (_: SecurityException) { null }
-                    val looksLikeGlasses = name?.contains("HeyCyan", ignoreCase = true) == true ||
-                        name?.contains("Cyan", ignoreCase = true) == true ||
-                        name?.startsWith("O_") == true ||
-                        name?.startsWith("Q_") == true
+                val saved = if (DeviceProfileStore.isMetaSelected(context)) {
+                    null
+                } else {
+                    DeviceManager.getInstance().deviceAddress
+                }
+                val name = try { device?.name } catch (_: SecurityException) { null }
+                val looksLikeGlasses = name?.contains("HeyCyan", ignoreCase = true) == true ||
+                    name?.contains("Cyan", ignoreCase = true) == true ||
+                    name?.startsWith("O_") == true ||
+                    name?.startsWith("Q_") == true
 
+                Log.i(
+                    "BluetoothReceiver",
+                    "ACL_CONNECTED device=${device?.address ?: "unknown"} name=${name ?: "unknown"} " +
+                        "saved=${saved ?: "none"} selectedMatch=${!saved.isNullOrBlank() && saved.equals(device?.address, ignoreCase = true)} " +
+                        "looksLikeGlasses=$looksLikeGlasses bluetoothConnected=${BleOperateManager.getInstance().isConnected}",
+                )
+
+                if (device != null) {
                     if (!saved.isNullOrBlank() && saved.equals(device.address, ignoreCase = true)) {
                         AutoPairManager.requestConnectToMac(context, device.address, reason = "acl_connected_saved")
                     } else if (looksLikeGlasses) {
@@ -86,8 +91,31 @@ class BluetoothReceiver : BroadcastReceiver() {
                 }
             }
             BluetoothDevice.ACTION_ACL_DISCONNECTED -> {
-                // BLE reconnect loop will handle this; just trigger an immediate attempt.
-                AutoPairManager.requestConnect(context, reason = "acl_disconnected")
+                val device = intent.getParcelableExtra<BluetoothDevice>(BluetoothDevice.EXTRA_DEVICE)
+                val savedAddress = if (DeviceProfileStore.isMetaSelected(context)) {
+                    null
+                } else {
+                    DeviceManager.getInstance().deviceAddress
+                }
+                val isSelectedGlasses = when {
+                    savedAddress.isNullOrBlank() -> false
+                    device == null -> false
+                    else -> savedAddress.equals(device.address, ignoreCase = true)
+                }
+                Log.i(
+                    "BluetoothReceiver",
+                    "ACL_DISCONNECTED device=${device?.address ?: "unknown"} name=${try { device?.name ?: "unknown" } catch (_: SecurityException) { "unknown" }} " +
+                        "saved=${savedAddress ?: "none"} selected=${isSelectedGlasses} bluetoothConnected=${BleOperateManager.getInstance().isConnected}",
+                )
+                if (isSelectedGlasses && !BleOperateManager.getInstance().isConnected) {
+                    AutoPairManager.requestConnect(context, reason = "acl_disconnected_selected")
+                } else {
+                    Log.d(
+                        "BluetoothReceiver",
+                        "Skipping ACL disconnect reconnect for device=${device?.address ?: "unknown"} " +
+                            "selected=${isSelectedGlasses} bluetoothConnected=${BleOperateManager.getInstance().isConnected}",
+                    )
+                }
             }
 
             BluetoothDevice.ACTION_FOUND -> {

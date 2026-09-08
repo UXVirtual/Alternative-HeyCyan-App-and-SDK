@@ -68,6 +68,7 @@ class SpeechQueueController(
 
     private val pendingQueue = ConcurrentLinkedQueue<QueuedSpeechItem>()
     private val currentlySpeakingItem = AtomicInteger(0) // Count of active speaking/submitted items
+    private val spokenTextBySession = mutableMapOf<Long, StringBuilder>()
 
     val metrics = PerformanceMetrics()
 
@@ -80,6 +81,7 @@ class SpeechQueueController(
     @Synchronized
     fun startSession(sessionId: Long) {
         clearQueue()
+        spokenTextBySession[sessionId] = StringBuilder()
         this.activeSessionId = sessionId
         this.sequenceCounter.set(0)
         this.currentlySpeakingItem.set(0)
@@ -92,6 +94,7 @@ class SpeechQueueController(
     @Synchronized
     fun cancelSession() {
         metrics.cancelledCount++
+        spokenTextBySession.remove(activeSessionId)
         this.activeSessionId++
         clearQueue()
         runCatching { tts?.stop() }
@@ -112,12 +115,25 @@ class SpeechQueueController(
         val normalized = StreamingTextNormalizer.normalizeForSpeech(rawChunkText, languageTag)
         if (normalized.isBlank()) return
 
+        val spokenText = spokenTextBySession[sessionId] ?: StringBuilder().also { spokenTextBySession[sessionId] = it }
+        val currentHistory = spokenText.toString()
+        val delta = when {
+            currentHistory.isEmpty() -> normalized
+            normalized == currentHistory -> return
+            normalized.startsWith(currentHistory) -> normalized.substring(currentHistory.length).takeIf { it.isNotBlank() } ?: return
+            currentHistory.endsWith(normalized) -> return
+            else -> normalized
+        }
+        if (delta.isBlank()) return
+
+        spokenText.append(delta)
+
         val seq = sequenceCounter.getAndIncrement()
         val item = QueuedSpeechItem(
             sessionId = sessionId,
             sequence = seq,
             rawText = rawChunkText,
-            normalizedSpeechText = normalized,
+            normalizedSpeechText = delta,
             languageTag = languageTag,
         )
 
@@ -127,7 +143,7 @@ class SpeechQueueController(
 
         pendingQueue.add(item)
         metrics.totalSpokenChunks++
-        val codePoints = normalized.codePointCount(0, normalized.length)
+        val codePoints = delta.codePointCount(0, delta.length)
         metrics.totalSpokenCodePoints += codePoints
         metrics.smallestChunkCodePoints = minOf(metrics.smallestChunkCodePoints, codePoints)
         metrics.largestChunkCodePoints = maxOf(metrics.largestChunkCodePoints, codePoints)
@@ -162,18 +178,32 @@ class SpeechQueueController(
 
             val bundle = Bundle().apply {
                 putString(TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID, utteranceId)
-                putString(TextToSpeech.Engine.KEY_PARAM_STREAM, AudioManager.STREAM_VOICE_CALL.toString())
+                // Final assistant replies should not force the Bluetooth voice-call path. Keep that
+                // route only for short listening cues and mic setup, since it can cause duplicate
+                // rendering on connected headset devices.
+                putString(TextToSpeech.Engine.KEY_PARAM_STREAM, AudioManager.STREAM_MUSIC.toString())
             }
 
             runCatching {
                 ttsEngine.setAudioAttributes(
                     AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
+                        .setUsage(AudioAttributes.USAGE_NOTIFICATION)
                         .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
                         .build(),
                 )
             }.onFailure { e ->
-                Log.w(TAG, "Could not configure TTS voice communication audio attributes for session=${item.sessionId}", e)
+                Log.w(TAG, "Could not configure TTS notification audio attributes for session=${item.sessionId}", e)
+            }
+
+            runCatching {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    audioManager.clearCommunicationDevice()
+                }
+                audioManager.isBluetoothScoOn = false
+                audioManager.stopBluetoothSco()
+                audioManager.mode = AudioManager.MODE_NORMAL
+            }.onFailure { e ->
+                Log.w(TAG, "Could not clear SCO route before TTS playback for session=${item.sessionId}", e)
             }
 
             val queueMode = if (item.sequence == 0) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD
@@ -240,7 +270,6 @@ class SpeechQueueController(
 
     @Synchronized
     private fun clearQueue() {
-        pendingQueue.clear()
         currentlySpeakingItem.set(0)
     }
 

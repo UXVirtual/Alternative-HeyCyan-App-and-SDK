@@ -20,9 +20,20 @@ import org.greenrobot.eventbus.EventBus
  **/
 class MyBluetoothReceiver : QCBluetoothCallbackCloneReceiver() {
     override fun connectStatue(device: BluetoothDevice?, connected: Boolean) {
-        Log.e("connectStatue","---connectStatue")
+        val address = device?.address ?: "unknown"
+        val name = try {
+            device?.name ?: "unknown"
+        } catch (_: SecurityException) {
+            "unknown"
+        }
+        val sdkDeviceName = try { DeviceManager.getInstance().deviceName ?: "unknown" } catch (_: Exception) { "unknown" }
+        val sdkDeviceAddress = try { DeviceManager.getInstance().deviceAddress ?: "unknown" } catch (_: Exception) { "unknown" }
+        Log.i(
+            "MyBluetoothReceiver",
+            "connectStatue connected=$connected device=$address name=$name sdkDeviceName=$sdkDeviceName sdkDeviceAddress=$sdkDeviceAddress selectedClass=${DeviceProfileStore.selectedClass(MyApplication.getInstance())} isReady=${BleOperateManager.getInstance().isReady}",
+        )
         if (DeviceProfileStore.isMetaSelected(MyApplication.getInstance())) return
-        if(device !=null && connected){
+        if (device != null && connected) {
             val deviceName = try {
                 device.name
             } catch (_: SecurityException) {
@@ -31,7 +42,7 @@ class MyBluetoothReceiver : QCBluetoothCallbackCloneReceiver() {
             if (deviceName != null) {
                 DeviceManager.getInstance().deviceName = deviceName
             }
-        }else{
+        } else {
             EventBus.getDefault().post(BluetoothEvent(false))
         }
     }
@@ -43,7 +54,10 @@ class MyBluetoothReceiver : QCBluetoothCallbackCloneReceiver() {
         // Must receive a callback before other instructions can be issued
         // eg. set time, sync settings, etc.
         EventBus.getDefault().post(BluetoothEvent(true))
-        Log.e("onServiceDiscovered","---onServiceDiscovered")
+        Log.i(
+            "MyBluetoothReceiver",
+            "onServiceDiscovered isReady=${BleOperateManager.getInstance().isReady} deviceName=${try { DeviceManager.getInstance().deviceName ?: "unknown" } catch (_: Exception) { "unknown" }} deviceAddress=${try { DeviceManager.getInstance().deviceAddress ?: "unknown" } catch (_: Exception) { "unknown" }}",
+        )
         BleOperateManager.getInstance().isReady=true
     }
 

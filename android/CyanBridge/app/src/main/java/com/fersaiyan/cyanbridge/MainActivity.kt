@@ -373,6 +373,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             streamType?.let { putString(TextToSpeech.Engine.KEY_PARAM_STREAM, it.toString()) }
         }
 
+        restorePhoneAudioRouteForPlayback("assistant TTS")
         AudioSessionCoordinator.markBusy()
         val result = engine?.speak(speechText, TextToSpeech.QUEUE_FLUSH, bundle, id)
         Log.i(
@@ -5334,6 +5335,35 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         Log.i("ImageQuestionAudio", "Configured TTS voice-communication audio reason=$reason result=$result")
     }
 
+    private fun restorePhoneAudioRouteForPlayback(reason: String) {
+        val audioManager = getSystemService(Context.AUDIO_SERVICE) as? android.media.AudioManager ?: return
+        runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                val builtInSpeaker = audioManager.availableCommunicationDevices.firstOrNull {
+                    it.type == android.media.AudioDeviceInfo.TYPE_BUILTIN_SPEAKER ||
+                        it.type == android.media.AudioDeviceInfo.TYPE_BUILTIN_EARPIECE
+                }
+                if (builtInSpeaker != null) {
+                    val selected = audioManager.setCommunicationDevice(builtInSpeaker)
+                    Log.i(
+                        "ImageQuestionAudio",
+                        "Restored phone route for $reason device=${builtInSpeaker.type} selected=$selected",
+                    )
+                } else {
+                    audioManager.clearCommunicationDevice()
+                }
+            } else {
+                @Suppress("DEPRECATION")
+                audioManager.isBluetoothScoOn = false
+                @Suppress("DEPRECATION")
+                audioManager.stopBluetoothSco()
+            }
+            audioManager.mode = android.media.AudioManager.MODE_NORMAL
+        }.onFailure { e ->
+            Log.w("ImageQuestionAudio", "Could not restore phone route for $reason", e)
+        }
+    }
+
     private fun startBluetoothMicRoute(audioManager: android.media.AudioManager) {
         runCatching {
             Log.i("ImageQuestionAudio", "Selecting Bluetooth microphone route: ${audioRouteSummary(audioManager)}")
@@ -5517,14 +5547,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             // newer query. AudioManager is a process singleton, so the per-query owner object
             // is what makes this check race-safe.
             if (!activeVoiceAudioRoute.compareAndSet(audioRouteOwner, null)) return
-            runCatching {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    audioManager.clearCommunicationDevice()
-                }
-                audioManager.isBluetoothScoOn = false
-                audioManager.stopBluetoothSco()
-                audioManager.mode = android.media.AudioManager.MODE_NORMAL
-            }
+            restorePhoneAudioRouteForPlayback("voice-query cleanup")
         }
 
         fun finishVoiceQueryWork() {

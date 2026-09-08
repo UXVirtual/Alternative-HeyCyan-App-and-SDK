@@ -2,6 +2,7 @@ package com.fersaiyan.cyanbridge.devices
 import com.fersaiyan.cyanbridge.shared.devices.DeviceProfile
 
 import android.content.Context
+import android.util.Log
 import com.fersaiyan.cyanbridge.shared.devices.DeviceClass
 
 /**
@@ -32,6 +33,11 @@ object DeviceProfileStore {
             .putBoolean(KEY_LAST_USER_OVERRIDDEN, profile.userOverridden)
             .apply()
 
+        Log.i(
+            "DeviceProfileStore",
+            "saveLastSelected mac=${profile.macAddress} name=${profile.advertisedName ?: "unknown"} detected=${profile.detectedClass} selected=${profile.selectedClass} userOverridden=${profile.userOverridden}",
+        )
+
         // Also persist per-device override so a later scan remembers the user's choice.
         if (profile.userOverridden) {
             setUserOverrideForMac(context, profile.macAddress, profile.selectedClass)
@@ -42,12 +48,20 @@ object DeviceProfileStore {
 
     fun loadLastSelected(context: Context): DeviceProfile? {
         val p = prefs(context)
-        val mac = p.getString(KEY_LAST_MAC, null) ?: return null
+        val mac = p.getString(KEY_LAST_MAC, null) ?: run {
+            Log.d("DeviceProfileStore", "loadLastSelected: no stored profile")
+            return null
+        }
         val name = p.getString(KEY_LAST_NAME, null)
         val detected = p.getString(KEY_LAST_DETECTED_CLASS, null)?.let { safeClass(it) } ?: DeviceClass.UNKNOWN
         val selected = p.getString(KEY_LAST_SELECTED_CLASS, null)?.let { safeClass(it) } ?: detected
         val overridden = p.getBoolean(KEY_LAST_USER_OVERRIDDEN, false)
-        return DeviceProfile(mac, name, detected, selected, overridden)
+        val profile = DeviceProfile(mac, name, detected, selected, overridden)
+        Log.i(
+            "DeviceProfileStore",
+            "loadLastSelected mac=$mac name=${name ?: "unknown"} detected=$detected selected=$selected userOverridden=$overridden",
+        )
+        return profile
     }
 
     fun selectedClass(context: Context): DeviceClass =

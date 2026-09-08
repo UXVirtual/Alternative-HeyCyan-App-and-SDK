@@ -37,11 +37,16 @@ import kotlinx.coroutines.launch
  */
 object AutoPairManager {
     private const val TAG = "AutoPair"
+    private const val MIN_RECONNECT_INTERVAL_MS = 8_000L
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val reconnectLock = Any()
 
     @Volatile
     private var started = false
+
+    @Volatile
+    private var lastReconnectAttemptMs = 0L
 
     /**
      * When true, automatic reconnect attempts are disabled until the user manually
@@ -114,17 +119,35 @@ object AutoPairManager {
     }
 
     fun requestConnect(context: Context, reason: String) {
+        val appContext = context.applicationContext
+        val saved = DeviceProfileStore.loadLastSelected(appContext)
+        val mac = if (saved?.selectedClass == DeviceClass.META_RAYBAN) "meta" else getTargetMac(appContext)
+        Log.i(
+            TAG,
+            "requestConnect reason=$reason selectedClass=${saved?.selectedClass ?: "unknown"} savedMac=${saved?.macAddress ?: "none"} targetMac=${mac ?: "none"} " +
+                "connected=${BleOperateManager.getInstance().isConnected} suppressed=$suppressAutoReconnect",
+        )
         if (suppressAutoReconnect) {
             Log.d(TAG, "Skipping auto-pair ($reason): suppressed")
             return
         }
-        val appContext = context.applicationContext
+        if (BleOperateManager.getInstance().isConnected) {
+            Log.d(TAG, "Skipping auto-pair ($reason): already connected")
+            return
+        }
+        if (!shouldAttemptReconnect(reason)) {
+            return
+        }
         scope.launch {
             tryConnectOnce(appContext, reason)
         }
     }
 
     fun requestConnectToMac(context: Context, mac: String, reason: String) {
+        Log.i(
+            TAG,
+            "requestConnectToMac reason=$reason mac=$mac selectedClass=${DeviceProfileStore.selectedClass(context)} connected=${BleOperateManager.getInstance().isConnected} suppressed=$suppressAutoReconnect",
+        )
         if (DeviceProfileStore.selectedClass(context) == DeviceClass.EYEVUE) {
             if (suppressAutoReconnect) {
                 Log.d(TAG, "Skipping Eyevue reconnect ($reason): suppressed")
@@ -149,9 +172,30 @@ object AutoPairManager {
             Log.d(TAG, "Skipping auto-pair ($reason): suppressed")
             return
         }
+        if (BleOperateManager.getInstance().isConnected) {
+            Log.d(TAG, "Skipping direct reconnect ($reason): already connected")
+            return
+        }
+        if (!shouldAttemptReconnect(reason)) {
+            return
+        }
         val appContext = context.applicationContext
         scope.launch {
             tryConnectToMacOnce(appContext, mac, reason)
+        }
+    }
+
+    private fun shouldAttemptReconnect(reason: String): Boolean {
+        synchronized(reconnectLock) {
+            val now = System.currentTimeMillis()
+            val last = lastReconnectAttemptMs
+            val elapsed = now - last
+            if (elapsed < MIN_RECONNECT_INTERVAL_MS) {
+                Log.d(TAG, "Debouncing reconnect ($reason): ${MIN_RECONNECT_INTERVAL_MS - elapsed}ms remaining")
+                return false
+            }
+            lastReconnectAttemptMs = now
+            return true
         }
     }
 
@@ -295,7 +339,7 @@ object AutoPairManager {
             return false
         }
 
-        Log.i(TAG, "Auto-pair ($reason): connectDirectly($mac)")
+        Log.i(TAG, "Auto-pair ($reason): connectDirectly($mac) selectedClass=${profile?.selectedClass ?: "unknown"} connected=${mgr.isConnected}")
         try {
             mgr.reConnectMac = mac
         } catch (_: Throwable) {
@@ -337,7 +381,7 @@ object AutoPairManager {
             return false
         }
 
-        Log.i(TAG, "Auto-pair ($reason): connectDirectly($mac)")
+        Log.i(TAG, "Auto-pair ($reason): connectDirectly($mac) selectedClass=${DeviceProfileStore.selectedClass(context)} connected=${mgr.isConnected}")
         try {
             mgr.reConnectMac = mac
         } catch (_: Throwable) {

@@ -95,10 +95,16 @@ class DeviceBindActivity : BaseActivity() {
                         }
                         if (device != null) {
                             connectingDevice = device
-                            selectedDeviceClass = pairingChoiceFor(device.effectiveSelectedClass())
+                            val effective = pairingChoiceFor(device.effectiveSelectedClass())
+                            selectedDeviceClass = effective
+                            persistSelectedDevice(device, effective, userOverridden = true, reason = "ui_select")
                         }
                     },
-                    onSelectedClassChange = { selectedDeviceClass = it },
+                    onSelectedClassChange = { selectedDeviceClass = it
+                        connectingDevice?.let { device ->
+                            persistSelectedDevice(device, it, userOverridden = true, reason = "ui_class_change")
+                        }
+                    },
                     onConfirmConnection = ::confirmConnection,
                     onDismissConnection = { connectingDevice = null },
                     onBack = ::finish,
@@ -388,22 +394,38 @@ class DeviceBindActivity : BaseActivity() {
         }
     }
 
+    private fun persistSelectedDevice(
+        device: ScannedDevice,
+        deviceClass: DeviceClass,
+        userOverridden: Boolean,
+        reason: String,
+    ) {
+        val address = device.connectionAddress.takeIf { !it.isBlank() } ?: device.macAddress
+        if (address.isBlank()) {
+            Log.w(TAG, "Skipping selected-device persistence for $reason: blank address device=${device.macAddress}")
+            return
+        }
+        device.connectionAddress = address
+        device.userSelectedClass = deviceClass
+        DeviceProfileStore.saveLastSelected(
+            this,
+            DeviceProfile(
+                macAddress = address,
+                advertisedName = device.advertisedName ?: device.macAddress,
+                detectedClass = device.detectedClass,
+                selectedClass = deviceClass,
+                userOverridden = userOverridden,
+            ),
+        )
+        Log.i(TAG, "Persisted selected device reason=$reason mac=$address class=$deviceClass detected=${device.detectedClass}")
+    }
+
     private fun saveSelectedProfile(
         device: ScannedDevice,
         deviceClass: DeviceClass,
         userOverridden: Boolean,
     ) {
-        device.userSelectedClass = deviceClass
-        DeviceProfileStore.saveLastSelected(
-            this,
-            DeviceProfile(
-                macAddress = device.connectionAddress,
-                advertisedName = device.advertisedName,
-                detectedClass = deviceClass,
-                selectedClass = deviceClass,
-                userOverridden = userOverridden,
-            ),
-        )
+        persistSelectedDevice(device, deviceClass, userOverridden, reason = "saveSelectedProfile")
     }
 
     private fun pairingChoiceFor(detected: DeviceClass): DeviceClass = when (detected) {
