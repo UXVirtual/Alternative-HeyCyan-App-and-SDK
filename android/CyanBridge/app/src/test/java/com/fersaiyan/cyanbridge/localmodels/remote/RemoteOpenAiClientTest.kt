@@ -89,6 +89,21 @@ class RemoteOpenAiClientTest {
     }
 
     @Test
+    fun responses_api_omits_temperature_for_model_compatibility() {
+        val payload = RemoteOpenAiClient.buildChatCompletionPayload(
+            model = "gpt-5.4-mini",
+            messages = listOf(mapOf("role" to "user", "content" to "Say hi")),
+            maxTokens = 64,
+            temperature = 0.2,
+            apiMode = RemoteOpenAiApiMode.RESPONSES,
+        )
+
+        assertFalse(payload.has("temperature"))
+        assertTrue(payload.has("model"))
+        assertTrue(payload.has("input"))
+    }
+
+    @Test
     fun responses_streaming_payloads_are_parsed_from_output_text_delta_events() {
         val payload = JSONObject(
             """

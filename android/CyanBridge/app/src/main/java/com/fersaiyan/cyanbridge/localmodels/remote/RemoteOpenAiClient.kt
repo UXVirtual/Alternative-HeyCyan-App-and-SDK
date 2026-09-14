@@ -232,6 +232,20 @@ object RemoteOpenAiClient {
     private fun normalizeCacheText(value: String): String =
         value.replace(Regex("\\s+"), " ").trim()
 
+    private fun temperatureIsSupportedForModel(model: String): Boolean {
+        val normalized = model.trim().lowercase(Locale.US)
+        return normalized !in setOf(
+            "gpt-5",
+            "gpt-5-mini",
+            "gpt-5-nano",
+            "gpt-5-chat-latest",
+            "gpt-5.4-mini",
+            "gpt-5.4",
+            "gpt-5.6-luna",
+            "gpt-5.6",
+        )
+    }
+
     internal fun buildSpeechPayload(
         model: String,
         input: String,
@@ -472,8 +486,10 @@ object RemoteOpenAiClient {
                 .put("model", model.trim())
                 .put("input", input)
                 .put("max_output_tokens", maxTokens)
-                .put("temperature", temperature)
-                .apply { if (stream) put("stream", true) }
+                .apply {
+                    if (temperatureIsSupportedForModel(model)) put("temperature", temperature)
+                    if (stream) put("stream", true)
+                }
         }
 
         return JSONObject()
