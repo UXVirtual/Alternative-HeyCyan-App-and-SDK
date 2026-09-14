@@ -23,6 +23,18 @@ object DeviceCapabilityHelper {
         )
     }
 
+    fun supportsCapturedPreview(selected: DeviceClass): Boolean {
+        return selected in setOf(
+            DeviceClass.HEY_CYAN,
+            DeviceClass.EYEVUE,
+            DeviceClass.TUNEBUDS,
+            DeviceClass.META_RAYBAN,
+            DeviceClass.UNKNOWN,
+        )
+    }
+
+    fun supportsCapturedPreview(context: Context): Boolean = supportsCapturedPreview(selectedClass(context))
+
     fun hasOnboardStorage(context: Context): Boolean {
         val selected = selectedClass(context)
         return selected in setOf(DeviceClass.HEY_CYAN, DeviceClass.EYEVUE, DeviceClass.TUNEBUDS, DeviceClass.UNKNOWN)

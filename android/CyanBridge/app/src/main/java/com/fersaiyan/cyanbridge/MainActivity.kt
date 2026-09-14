@@ -229,6 +229,7 @@ import com.fersaiyan.cyanbridge.ai.image.ImageQuestionSource
 import com.fersaiyan.cyanbridge.ai.image.ImageQuestionSourcePolicy
 import com.fersaiyan.cyanbridge.ai.image.ImageThumbnailQuality
 import com.fersaiyan.cyanbridge.ai.AiQuestionForegroundService
+import com.fersaiyan.cyanbridge.ai.live.GeminiLiveGlassesImageCapture
 import com.fersaiyan.cyanbridge.ai.image.HighQualityFailureChoice
 import com.fersaiyan.cyanbridge.shared.glasses.GlassesAssistantMode
 import com.fersaiyan.cyanbridge.shared.glasses.AiWakeWordRoute
@@ -640,6 +641,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private var pendingImageCaptureStartedAtMs: Long = 0L
     private var mediaDownloadPurpose = MediaDownloadPurpose.FULL_SYNC
     private var highQualityImageRequest: HighQualityImageRequest? = null
+    private var lastGlassesPreviewFile: File? = null
     private var lastImageQueryAtMs: Long = 0L
     private var activeParallelAudioQuestionDeferred: kotlinx.coroutines.CompletableDeferred<String?>? = null
     private var activeParallelAudioQuestionJob: Job? = null
@@ -1626,6 +1628,8 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                 is GlassesDashboardAction.SelectAssistantMode,
                 GlassesDashboardAction.TestVoiceQuestion,
                 GlassesDashboardAction.TestImageQuestion,
+                GlassesDashboardAction.CaptureAndPreviewGlassesImage,
+                GlassesDashboardAction.PreviewLastGlassesImage,
                 GlassesDashboardAction.OpenExternalImageAutomationDiagnostics,
                 GlassesDashboardAction.StartAgent,
                 GlassesDashboardAction.StopAgent,
@@ -1750,6 +1754,8 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             }
             GlassesDashboardAction.TestVoiceQuestion -> binding.btnTestHijackVoice.performClick()
             GlassesDashboardAction.TestImageQuestion -> binding.btnTestHijackImage.performClick()
+            GlassesDashboardAction.CaptureAndPreviewGlassesImage -> previewCapturedGlassesImageFromUi()
+            GlassesDashboardAction.PreviewLastGlassesImage -> previewLastCapturedGlassesImageFromUi()
             GlassesDashboardAction.OpenExternalImageAutomationDiagnostics -> {
                 startActivity(Intent(this, ExternalAssistantAutomationSetupActivity::class.java))
             }
@@ -2283,6 +2289,8 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             binding.btnModeTasker,
             binding.btnTestHijackVoice,
             binding.btnTestHijackImage,
+            binding.btnPreviewGlassesImage,
+            binding.btnPreviewLastGlassesImage,
             binding.btnToggleAdvanced,
             // binding.btnNotes,
             binding.btnMeetingStart,
@@ -2337,6 +2345,8 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                 this == binding.btnMediaCount ||
                 this == binding.btnDataDownload ||
                 this == binding.btnTestHijackImage ||
+                this == binding.btnPreviewGlassesImage ||
+                this == binding.btnPreviewLastGlassesImage ||
                 this == binding.btnOtaInfo ||
                 this == binding.btnPullOtaTest
             if (needsBluetoothPermission && !hasBluetooth(this@MainActivity)) {
@@ -2355,6 +2365,8 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                 this == binding.btnDataDownload ||
                 this == binding.btnTestHijackVoice ||
                 this == binding.btnTestHijackImage ||
+                this == binding.btnPreviewGlassesImage ||
+                this == binding.btnPreviewLastGlassesImage ||
                 this == binding.btnPullOtaTest
             val shouldStopGlassesAudio = this != binding.btnScan &&
                 this != binding.btnConnect &&
@@ -2386,6 +2398,14 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
                 binding.btnTestHijackImage -> {
                     startImageQuestionFromUi()
+                }
+
+                binding.btnPreviewGlassesImage -> {
+                    previewCapturedGlassesImageFromUi()
+                }
+
+                binding.btnPreviewLastGlassesImage -> {
+                    previewLastCapturedGlassesImageFromUi()
                 }
 
                 binding.btnModeGemini -> {
@@ -3976,6 +3996,8 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         binding.btnTestHijackImage.isEnabled = true
         binding.btnTestHijackImage.alpha = 1f
         binding.btnTestHijackImage.text = "Test Image AI description"
+        binding.btnPreviewGlassesImage.isEnabled = true
+        binding.btnPreviewGlassesImage.alpha = 1f
         updateDashboardState { state ->
             state.copy(
                 imageQueryEnabled = true,
@@ -4534,16 +4556,19 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             CoroutineScope(Dispatchers.IO).launch {
                 try {
                     val thumbnailSize = pendingImageThumbnailQuality.sdkValue.toByte()
+                    val captureCommand = byteArrayOf(0x02, 0x01, 0x06, thumbnailSize, thumbnailSize)
                     Log.i(
                         "AIHijack",
                         "[$sourceTag] Requesting BLE AI capture at ${pendingImageThumbnailQuality.label} " +
                             "(${pendingImageThumbnailQuality.sdkValue})",
                     )
+                    Log.i(
+                        "CaptureTrace",
+                        "AI_QUESTION capture request source=$sourceTag payload=${captureCommand.joinToString(separator = ",") { (it.toInt() and 0xFF).toString() }}",
+                    )
                     // Match the vendor AI-chat path so the selected clarity controls the
                     // generated thumbnail instead of forcing the Home quick-preview mode.
-                    LargeDataHandler.getInstance().glassesControl(
-                        byteArrayOf(0x02, 0x01, 0x06, thumbnailSize, thumbnailSize),
-                    ) { _, response ->
+                    LargeDataHandler.getInstance().glassesControl(captureCommand) { _, response ->
                         Log.i(
                             "ImageQuestionTransfer",
                             "[$sourceTag] AI capture command response dataType=${response.dataType} " +
@@ -4597,6 +4622,156 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             ImageQuestionSource.HIGH_QUALITY -> requestHighQualityImageForQuestion(sourceTag)
             ImageQuestionSource.FAST_PREVIEW -> requestImageThumbnailForQuestion(sourceTag)
         }
+    }
+
+    private fun previewCapturedGlassesImageFromUi() {
+        when {
+            isMetaRaybanSelected() -> {
+                val manager = getOrCreateMetaRaybanManager()
+                lifecycleScope.launch(Dispatchers.IO) {
+                    try {
+                        val photo = manager.capturePhotoOnce()
+                        val file = manager.savePhotoForProcessing(photo, "META_PREVIEW")
+                        lastGlassesPreviewFile = file
+                        withContext(Dispatchers.Main) { showCapturedImagePreview(file) }
+                    } catch (error: Exception) {
+                        Log.e("AIHijack", "Meta preview capture failed", error)
+                        withContext(Dispatchers.Main) {
+                            Toast.makeText(
+                                this@MainActivity,
+                                error.message ?: "Meta preview capture failed",
+                                Toast.LENGTH_LONG,
+                            ).show()
+                        }
+                    }
+                }
+            }
+            isHeyCyanSelected() -> {
+                if (!BleOperateManager.getInstance().isConnected) {
+                    Toast.makeText(this, "Connect HeyCyan glasses first.", Toast.LENGTH_SHORT).show()
+                    return
+                }
+                lifecycleScope.launch(Dispatchers.IO) {
+                    try {
+                        // Explicitly separate preview-only from AI-question flows. The underlying
+                        // HeyCyan capture trigger is shared by both, but preview-only code must not
+                        // start the microphone or question workflow around it.
+                        val imageBytes = GeminiLiveGlassesImageCapture()
+                            .captureForPreviewOnly(ImageQuestionPreferences.thumbnailQuality(this@MainActivity))
+                        val file = File(cacheDir, "HeyCyan_Preview_${System.currentTimeMillis()}.jpg")
+                        file.writeBytes(imageBytes)
+                        lastGlassesPreviewFile = file
+                        withContext(Dispatchers.Main) { showCapturedImagePreview(file) }
+                    } catch (error: Exception) {
+                        Log.e("AIHijack", "HeyCyan preview capture failed", error)
+                        withContext(Dispatchers.Main) {
+                            Toast.makeText(
+                                this@MainActivity,
+                                error.message ?: "HeyCyan preview capture failed",
+                                Toast.LENGTH_LONG,
+                            ).show()
+                        }
+                    }
+                }
+            }
+            isEyevueSelected() -> {
+                val manager = getOrCreateEyevueManager()
+                if (!manager.isConnected()) {
+                    Toast.makeText(this, "Connect Eyevue glasses first.", Toast.LENGTH_SHORT).show()
+                    return
+                }
+                lifecycleScope.launch(Dispatchers.IO) {
+                    try {
+                        val imageBytes = manager.capturePhotoForAi()
+                            ?: throw IOException("Eyevue preview photo timed out")
+                        val file = File(cacheDir, "Eyevue_Preview_${System.currentTimeMillis()}.jpg")
+                        file.writeBytes(imageBytes)
+                        lastGlassesPreviewFile = file
+                        withContext(Dispatchers.Main) { showCapturedImagePreview(file) }
+                    } catch (error: Exception) {
+                        Log.e("AIHijack", "Eyevue preview capture failed", error)
+                        withContext(Dispatchers.Main) {
+                            Toast.makeText(
+                                this@MainActivity,
+                                error.message ?: "Eyevue preview capture failed",
+                                Toast.LENGTH_LONG,
+                            ).show()
+                        }
+                    }
+                }
+            }
+            isTuneBudsSelected() -> {
+                val manager = getOrCreateTuneBudsManager()
+                if (!manager.isConnected()) {
+                    Toast.makeText(this, "Connect TuneBuds glasses first.", Toast.LENGTH_SHORT).show()
+                    return
+                }
+                lifecycleScope.launch(Dispatchers.IO) {
+                    try {
+                        val imageBytes = manager.capturePhotoForAi()
+                            ?: throw IOException("TuneBuds preview photo timed out")
+                        val file = File(cacheDir, "TuneBuds_Preview_${System.currentTimeMillis()}.jpg")
+                        file.writeBytes(imageBytes)
+                        lastGlassesPreviewFile = file
+                        withContext(Dispatchers.Main) { showCapturedImagePreview(file) }
+                    } catch (error: Exception) {
+                        Log.e("AIHijack", "TuneBuds preview capture failed", error)
+                        withContext(Dispatchers.Main) {
+                            Toast.makeText(
+                                this@MainActivity,
+                                error.message ?: "TuneBuds preview capture failed",
+                                Toast.LENGTH_LONG,
+                            ).show()
+                        }
+                    }
+                }
+            }
+            else -> {
+                Toast.makeText(this, "Connect a supported glasses device first.", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    private fun previewLastCapturedGlassesImageFromUi() {
+        val file = lastGlassesPreviewFile ?: run {
+            Toast.makeText(this, "No captured glasses preview has been saved yet.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (!file.exists() || !file.canRead()) {
+            Toast.makeText(this, "Last captured preview file is missing or unreadable.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        showCapturedImagePreview(file)
+    }
+
+    private fun showCapturedImagePreview(file: File) {
+        if (!file.exists() || !file.canRead()) {
+            Toast.makeText(this, "Captured preview file is unavailable.", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val bitmap = BitmapFactory.decodeFile(file.absolutePath)
+        if (bitmap == null) {
+            Toast.makeText(this, "Could not decode the captured JPEG preview.", Toast.LENGTH_LONG).show()
+            return
+        }
+
+        val imageView = android.widget.ImageView(this).apply {
+            layoutParams = android.view.ViewGroup.LayoutParams(
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
+            )
+            adjustViewBounds = true
+            scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
+            setImageBitmap(bitmap)
+            setPadding(24, 24, 24, 24)
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle("Captured glasses JPEG")
+            .setView(imageView)
+            .setPositiveButton("Close", null)
+            .show()
     }
 
     private fun captureMetaImageForQuestion(sourceTag: String) {
@@ -4910,6 +5085,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         val completed = java.util.concurrent.atomic.AtomicBoolean(false)
         val callbackCount = java.util.concurrent.atomic.AtomicInteger(0)
         val totalBytes = java.util.concurrent.atomic.AtomicLong(0L)
+        val fragments = linkedMapOf<Int, ByteArray>()
         val transferResult = CompletableDeferred<Boolean>()
         val writeLock = Any()
         val startedAtMs = android.os.SystemClock.elapsedRealtime()
@@ -4918,15 +5094,13 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             val callbackIndex = callbackCount.incrementAndGet()
             val dataBytes = data?.size ?: 0
             if (data != null && data.isNotEmpty()) {
-                runCatching {
-                    synchronized(writeLock) {
-                        FileOutputStream(file, true).use { it.write(data) }
+                synchronized(writeLock) {
+                    if (fragments[callbackIndex] == null || !fragments[callbackIndex]!!.contentEquals(data)) {
+                        fragments[callbackIndex] = data
                     }
-                    gotChunk.set(true)
-                    totalBytes.addAndGet(dataBytes.toLong())
-                }.onFailure { error ->
-                    Log.e("AIHijack", "[$sourceTag] Failed to write thumbnail chunk: ${error.message}", error)
                 }
+                gotChunk.set(true)
+                totalBytes.addAndGet(dataBytes.toLong())
             }
             if (callbackIndex == 1 || callbackIndex % 32 == 0 || isComplete) {
                 Log.i(
@@ -4938,12 +5112,22 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             }
 
             if (isComplete && completed.compareAndSet(false, true)) {
+                val reassembled = GeminiLiveGlassesImageCapture().reassembleFragments(fragments)
+                if (reassembled.isNotEmpty()) {
+                    runCatching {
+                        synchronized(writeLock) {
+                            FileOutputStream(file, false).use { it.write(reassembled) }
+                        }
+                    }.onFailure { error ->
+                        Log.e("AIHijack", "[$sourceTag] Failed to write reassembled thumbnail: ${error.message}", error)
+                    }
+                }
                 Log.i(
                     "ImageQuestionTransfer",
                     "[$sourceTag] Thumbnail completion received chunks=${callbackCount.get()} " +
-                        "bytes=${totalBytes.get()} hasData=${gotChunk.get()}",
+                        "bytes=${totalBytes.get()} hasData=${gotChunk.get()} reassembledBytes=${reassembled.size}",
                 )
-                transferResult.complete(gotChunk.get())
+                transferResult.complete(gotChunk.get() && reassembled.isNotEmpty())
                 GlassesSessionCoordinator.releaseBackgroundCommand(permit)
             }
         }
@@ -10933,6 +11117,11 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                 "DeviceNotify",
                 "cmdType=$cmdType, loadData=${response.loadData.joinToString(separator = ",") { it.toInt().toString() }}"
             )
+            val rawHex = response.loadData.joinToString(separator = " ") { "%02X".format(it.toInt() and 0xFF) }
+            Log.i(
+                "CaptureTrace",
+                "DeviceNotify raw cmdType=$cmdType hex=${rawHex} len=${response.loadData.size}",
+            )
             if (otaManager.isActive) {
                 Log.d("DeviceNotify", "Skipping general device-notify handling during OTA")
                 return
@@ -10960,6 +11149,10 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                             "thumbnailInProgress=${imageThumbnailRequestInProgress.get()} " +
                             "captureAgeMs=${System.currentTimeMillis() - pendingImageCaptureStartedAtMs} " +
                             "payload=${response.loadData.joinToString { (it.toInt() and 0xFF).toString() }}",
+                    )
+                    Log.i(
+                        "CaptureTrace",
+                        "Photo-ready notify source=$sourceTag raw=${response.loadData.joinToString(separator = " ") { "%02X".format(it.toInt() and 0xFF) }}",
                     )
                     if (isAiHijackEnabled) {
                         runOnUiThread {

@@ -421,6 +421,8 @@ private class IosAppController {
             GlassesDashboardAction.StartSync -> startSync()
             GlassesDashboardAction.StopSync -> stopSync()
             GlassesDashboardAction.CapturePhoto -> sendGlassesCommand("camera", byteArrayOf(0x02, 0x01, 0x01))
+            GlassesDashboardAction.CaptureAndPreviewGlassesImage,
+            GlassesDashboardAction.PreviewLastGlassesImage -> updateState { it.copy(agentLastError = "Preview JPEG actions are only implemented in the Android host yet") }
             GlassesDashboardAction.StartAudioRecording -> sendGlassesCommand("audio recording", byteArrayOf(0x02, 0x01, 0x08))
             GlassesDashboardAction.RequestMediaCount -> sendGlassesCommand("media count", byteArrayOf(0x02, 0x04))
             GlassesDashboardAction.ToggleAdvanced -> updateState { it.copy(advancedExpanded = !it.advancedExpanded) }

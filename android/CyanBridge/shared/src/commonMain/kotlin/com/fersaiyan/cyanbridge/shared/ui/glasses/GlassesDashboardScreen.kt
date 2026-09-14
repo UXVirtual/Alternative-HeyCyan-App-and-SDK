@@ -670,6 +670,13 @@ private fun GlassesAssistantControls(
             onSecondary = { onAction(GlassesDashboardAction.TestImageQuestion) },
             secondaryEnabled = state.imageQueryEnabled,
         )
+        ActionRow(
+            primaryLabel = "Capture + Preview",
+            onPrimary = { onAction(GlassesDashboardAction.CaptureAndPreviewGlassesImage) },
+            secondaryLabel = "Preview last JPEG",
+            onSecondary = { onAction(GlassesDashboardAction.PreviewLastGlassesImage) },
+            secondaryEnabled = true,
+        )
         if (state.showAiWakeWordRouting) {
             AiWakeWordRouteControls(state, onAction)
         }

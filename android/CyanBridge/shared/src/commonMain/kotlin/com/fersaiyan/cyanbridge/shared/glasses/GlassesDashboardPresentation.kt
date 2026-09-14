@@ -228,6 +228,8 @@ sealed interface GlassesDashboardAction {
     data class SetAudioRecordingDuration(val seconds: Int) : GlassesDashboardAction
     data object TestVoiceQuestion : GlassesDashboardAction
     data object TestImageQuestion : GlassesDashboardAction
+    data object CaptureAndPreviewGlassesImage : GlassesDashboardAction
+    data object PreviewLastGlassesImage : GlassesDashboardAction
     data object OpenExternalImageAutomationDiagnostics : GlassesDashboardAction
     data object CapturePhoto : GlassesDashboardAction
     data object ToggleVideo : GlassesDashboardAction

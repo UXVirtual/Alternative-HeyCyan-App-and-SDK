@@ -3,6 +3,7 @@ package com.fersaiyan.cyanbridge.plugins.walkingaid
 import android.content.Context
 import android.graphics.BitmapFactory
 import android.util.Log
+import com.fersaiyan.cyanbridge.ai.live.GeminiLiveGlassesImageCapture
 import com.fersaiyan.cyanbridge.devices.DeviceProfileStore
 import com.fersaiyan.cyanbridge.devices.metarayban.MetaRaybanManager
 import com.fersaiyan.cyanbridge.glasses.GlassesSessionCoordinator
@@ -114,26 +115,45 @@ class WalkingAidImageCapture(context: Context) {
         val receivedBytes = java.util.concurrent.atomic.AtomicLong(0L)
         val transfer = CompletableDeferred<Boolean>()
         val writeLock = Any()
+        val fragments = linkedMapOf<Int, ByteArray>()
         val outputStream = FileOutputStream(outputFile, false)
 
-        LargeDataHandler.getInstance().getPictureThumbnails { _, isComplete, data ->
+        LargeDataHandler.getInstance().getPictureThumbnails { packetIndex, isComplete, data ->
             if (data != null && data.isNotEmpty()) {
                 synchronized(writeLock) {
                     if (acceptingData.get()) {
-                        outputStream.write(data)
+                        val existing = fragments[packetIndex]
+                        if (existing == null || !existing.contentEquals(data)) {
+                            fragments[packetIndex] = data
+                        }
                         receivedBytes.addAndGet(data.size.toLong())
                     }
                 }
             }
             if (isComplete && completed.compareAndSet(false, true)) {
-                transfer.complete(receivedBytes.get() >= MIN_IMAGE_BYTES)
+                val reassembled = synchronized(writeLock) {
+                    GeminiLiveGlassesImageCapture().reassembleFragments(fragments)
+                }
+                if (reassembled.isNotEmpty()) {
+                    runCatching {
+                        outputStream.write(reassembled)
+                    }
+                }
+                transfer.complete(reassembled.size >= MIN_IMAGE_BYTES)
+                synchronized(writeLock) {
+                    acceptingData.set(false)
+                    runCatching { outputStream.flush() }
+                    runCatching { outputStream.close() }
+                }
             }
         }
         val succeeded = withTimeoutOrNull(TRANSFER_TIMEOUT_MS) { transfer.await() } == true
-        synchronized(writeLock) {
-            acceptingData.set(false)
-            runCatching { outputStream.flush() }
-            runCatching { outputStream.close() }
+        if (!completed.get()) {
+            synchronized(writeLock) {
+                acceptingData.set(false)
+                runCatching { outputStream.flush() }
+                runCatching { outputStream.close() }
+            }
         }
         check(succeeded) {
             "Glasses thumbnail transfer timed out"

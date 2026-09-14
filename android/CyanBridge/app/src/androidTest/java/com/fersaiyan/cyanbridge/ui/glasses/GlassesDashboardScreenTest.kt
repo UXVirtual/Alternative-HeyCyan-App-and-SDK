@@ -60,6 +60,16 @@ class GlassesDashboardScreenTest {
         composeRule.runOnIdle {
             assertEquals(GlassesDashboardAction.TestImageQuestion, action)
         }
+
+        composeRule.onNodeWithText("Capture + Preview").performClick()
+        composeRule.runOnIdle {
+            assertEquals(GlassesDashboardAction.CaptureAndPreviewGlassesImage, action)
+        }
+
+        composeRule.onNodeWithText("Preview last JPEG").performClick()
+        composeRule.runOnIdle {
+            assertEquals(GlassesDashboardAction.PreviewLastGlassesImage, action)
+        }
     }
 
     @Test
@@ -138,6 +148,8 @@ class GlassesDashboardScreenTest {
         composeRule.onNodeWithText("Sync data (P2P)").assertIsDisplayed()
         composeRule.onNodeWithText("Test voice").assertIsDisplayed()
         composeRule.onNodeWithText("Test image AI description").assertIsDisplayed()
+        composeRule.onNodeWithText("Capture + Preview").assertIsDisplayed()
+        composeRule.onNodeWithText("Preview last JPEG").assertIsDisplayed()
         composeRule.onNodeWithText("Show advanced controls").assertIsDisplayed()
         composeRule.onAllNodesWithText("Meeting capture").assertCountEquals(0)
     }

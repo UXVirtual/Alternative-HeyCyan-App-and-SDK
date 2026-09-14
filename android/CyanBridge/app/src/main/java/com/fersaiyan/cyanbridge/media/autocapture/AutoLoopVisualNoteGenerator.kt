@@ -5,6 +5,7 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import android.widget.Toast
+import com.fersaiyan.cyanbridge.ai.live.GeminiLiveGlassesImageCapture
 import com.fersaiyan.cyanbridge.glasses.GlassesSessionCoordinator
 import com.fersaiyan.cyanbridge.devices.DeviceProfileStore
 import com.fersaiyan.cyanbridge.localagent.userfacts.CandidateUserFactsStorage
@@ -227,16 +228,28 @@ object AutoLoopVisualNoteGenerator {
             val completed = AtomicBoolean(false)
             val done = CompletableDeferred<File?>()
 
-            val thumbCallback: (Int, Boolean, ByteArray?) -> Unit = { _, isComplete, data ->
+            val fragments = linkedMapOf<Int, ByteArray>()
+            val fragmentsLock = Any()
+            val thumbCallback: (Int, Boolean, ByteArray?) -> Unit = { packetIndex, isComplete, data ->
                 if (data != null && data.isNotEmpty()) {
-                    runCatching {
-                        FileOutputStream(file, true).use { out -> out.write(data) }
-                    }.onFailure {
-                        Log.e(TAG, "Failed writing thumbnail chunk: ${it.message}", it)
+                    synchronized(fragmentsLock) {
+                        if (fragments[packetIndex] == null || !fragments[packetIndex]!!.contentEquals(data)) {
+                            fragments[packetIndex] = data
+                        }
                     }
                 }
 
                 if (isComplete && completed.compareAndSet(false, true)) {
+                    val reassembled = synchronized(fragmentsLock) {
+                        GeminiLiveGlassesImageCapture().reassembleFragments(fragments)
+                    }
+                    if (reassembled.isNotEmpty()) {
+                        runCatching {
+                            FileOutputStream(file, false).use { out -> out.write(reassembled) }
+                        }.onFailure {
+                            Log.e(TAG, "Failed writing reassembled thumbnail: ${it.message}", it)
+                        }
+                    }
                     if (!done.isCompleted) {
                         done.complete(if (file.exists() && file.length() >= 1024L) file else null)
                     }
