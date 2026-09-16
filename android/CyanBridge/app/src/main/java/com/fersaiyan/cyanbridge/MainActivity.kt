@@ -4744,6 +4744,35 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         showCapturedImagePreview(file)
     }
 
+    private fun saveCapturedGlassesPreviewToCameraRoll(file: File) {
+        if (!file.exists() || !file.canRead()) {
+            Toast.makeText(this, "Captured preview file is unavailable to save.", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        lifecycleScope.launch(Dispatchers.IO) {
+            val result = runCatching {
+                file.inputStream().use { input ->
+                    saveJpegToGallery(input, file.name, file.lastModified())
+                }
+            }.getOrElse {
+                GallerySaveResult(false, null, 0)
+            }
+
+            withContext(Dispatchers.Main) {
+                if (result.success && result.uri != null) {
+                    Toast.makeText(
+                        this@MainActivity,
+                        "Saved to camera roll. ${file.name}",
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                } else {
+                    Toast.makeText(this@MainActivity, "Could not save the JPEG to the camera roll.", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+
     private fun showCapturedImagePreview(file: File) {
         if (!file.exists() || !file.canRead()) {
             Toast.makeText(this, "Captured preview file is unavailable.", Toast.LENGTH_SHORT).show()
@@ -4770,6 +4799,9 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         AlertDialog.Builder(this)
             .setTitle("Captured glasses JPEG")
             .setView(imageView)
+            .setNeutralButton("Save to camera roll") { _, _ ->
+                saveCapturedGlassesPreviewToCameraRoll(file)
+            }
             .setPositiveButton("Close", null)
             .show()
     }
