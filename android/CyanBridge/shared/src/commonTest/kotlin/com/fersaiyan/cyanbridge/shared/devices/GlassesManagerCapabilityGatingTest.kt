@@ -50,6 +50,39 @@ class GlassesManagerCapabilityGatingTest {
         assertTrue(model.isVisible(GlassesManagerGating.Action.ADVANCED_OTA))
         assertTrue(model.isVisible(GlassesManagerGating.Action.CAPTURE_SETTINGS))
         assertTrue(model.isVisible(GlassesManagerGating.Action.AI_WAKE_WORD_ROUTING))
+        assertTrue(model.isVisible(GlassesManagerGating.Action.MEDIA_SYNC))
         assertTrue(model.isVisible(GlassesManagerGating.Action.WIFI_ADB_DEBUG))
+    }
+
+    @Test
+    fun qPrefixHeyCyanDisablesUnsupportedMediaSyncUi() {
+        val model = GlassesManagerGating.uiModel(
+            DeviceProfile(
+                macAddress = "AA:BB:CC:DD:EE:11",
+                advertisedName = "Q_ABC",
+                detectedClass = DeviceClass.HEY_CYAN,
+                selectedClass = DeviceClass.HEY_CYAN,
+                userOverridden = false,
+            ),
+        )
+
+        assertFalse(model.isVisible(GlassesManagerGating.Action.MEDIA_SYNC))
+        assertTrue(model.isVisible(GlassesManagerGating.Action.ADVANCED_IMAGE_QUALITY))
+    }
+
+    @Test
+    fun ankoIdentifierDisablesUnsupportedMediaSyncUi() {
+        val model = GlassesManagerGating.uiModel(
+            DeviceProfile(
+                macAddress = "AA:BB:CC:DD:EE:12",
+                advertisedName = "Anko43700141",
+                detectedClass = DeviceClass.HEY_CYAN,
+                selectedClass = DeviceClass.HEY_CYAN,
+                userOverridden = false,
+            ),
+        )
+
+        assertFalse(model.isVisible(GlassesManagerGating.Action.MEDIA_SYNC))
+        assertTrue(model.isVisible(GlassesManagerGating.Action.ADVANCED_IMAGE_QUALITY))
     }
 }

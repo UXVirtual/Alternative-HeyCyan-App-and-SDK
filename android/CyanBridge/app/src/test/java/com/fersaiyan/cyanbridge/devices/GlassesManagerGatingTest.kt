@@ -37,6 +37,21 @@ class GlassesManagerGatingTest {
     }
 
     @Test
+    fun unsupportedHeyCyanModel_keepsQualitySelectorVisibleButHidesDetailedOption() {
+        val profile = DeviceProfile(
+            macAddress = "AA:BB:CC:DD:EE:11",
+            advertisedName = "Q_ABC",
+            detectedClass = DeviceClass.HEY_CYAN,
+            selectedClass = DeviceClass.HEY_CYAN,
+            userOverridden = false,
+        )
+
+        val model = GlassesManagerGating.uiModel(profile)
+        assertTrue(model.isVisible(GlassesManagerGating.Action.ADVANCED_IMAGE_QUALITY))
+        assertFalse(model.isVisible(GlassesManagerGating.Action.MEDIA_SYNC))
+    }
+
+    @Test
     fun metaRayban_hidesHeyCyanExtras() {
         val profile = DeviceProfile(
             macAddress = "00:11:22:33:44:55",

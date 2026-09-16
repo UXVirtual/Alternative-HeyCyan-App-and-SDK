@@ -6697,6 +6697,12 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         return true
     }
 
+    private fun hidesDetailedQualityOption(profile: DeviceProfile?): Boolean {
+        val advertisedName = profile?.advertisedName?.trim().orEmpty().lowercase()
+        return profile?.selectedClass == com.fersaiyan.cyanbridge.shared.devices.DeviceClass.HEY_CYAN &&
+            (advertisedName == "anko43700141" || advertisedName.startsWith("q_") || advertisedName.startsWith("o_"))
+    }
+
     private fun updateDeviceClassText() {
         val profile = DeviceProfileStore.loadLastSelected(this)
         val classLabel = profile?.selectedClass?.displayName() ?: "Unknown"
@@ -6732,13 +6738,14 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                 showEyevueControls = model.isVisible(GlassesManagerGating.Action.EYEVUE_CONTROLS),
                 showTuneBudsControls = model.isVisible(GlassesManagerGating.Action.TUNEBUDS_CONTROLS),
                 showCaptureSettings = model.isVisible(GlassesManagerGating.Action.CAPTURE_SETTINGS),
-                showMediaSync = true,
+                showMediaSync = model.isVisible(GlassesManagerGating.Action.MEDIA_SYNC),
                 showAiWakeWordRouting = model.isVisible(GlassesManagerGating.Action.AI_WAKE_WORD_ROUTING),
                 showAdvancedControls = model.isVisible(GlassesManagerGating.Action.ADVANCED_CONTROLS),
                 showAdvancedLocalAgent = model.isVisible(GlassesManagerGating.Action.ADVANCED_LOCAL_AGENT),
                 showAdvancedDeviceInfo = model.isVisible(GlassesManagerGating.Action.ADVANCED_DEVICE_INFO),
                 showAdvancedDeviceVolume = model.isVisible(GlassesManagerGating.Action.ADVANCED_DEVICE_VOLUME),
                 showAdvancedImageQuality = model.isVisible(GlassesManagerGating.Action.ADVANCED_IMAGE_QUALITY),
+                showDetailedQualityOption = !hidesDetailedQualityOption(profile),
                 showAdvancedDeveloperTools = model.isVisible(GlassesManagerGating.Action.ADVANCED_DEVELOPER_TOOLS),
                 showAdvancedOta = model.isVisible(GlassesManagerGating.Action.ADVANCED_OTA),
                 deviceInfoLabel = state.deviceInfoLabel.takeIf {
@@ -10381,14 +10388,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     }
 
     private fun isProbablyGroupOwnerIp(ip: String?): Boolean {
-        if (ip.isNullOrBlank()) return false
-
-        // If the phone is not the group owner, then we shouldn't block the group owner IP (.1)
-        // because it belongs to the glasses.
-        if (downloadPhoneIsGroupOwner != true) return false
-
-        // Typical Wi‑Fi Direct GO address when phone is GO.
-        return ip == "192.168.49.1"
+        return HeyCyanP2pPolicy.isLikelyPhoneGroupOwnerAddress(ip) && downloadPhoneIsGroupOwner == true
     }
 
     private fun ipv4Prefix24(ip: String?): String? {
@@ -10674,10 +10674,17 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             return
         }
 
-        val targetIp = if (downloadPhoneIsGroupOwner == false && !downloadWifiIp.isNullOrBlank()) {
-            downloadWifiIp!!
-        } else {
-            bleIp
+        val targetIp = HeyCyanP2pPolicy.chooseOfficialTargetIp(
+            bleIp = bleIp,
+            groupOwnerIp = downloadWifiIp,
+            phoneIsGroupOwner = downloadPhoneIsGroupOwner,
+        )
+        if (targetIp.isNullOrBlank()) {
+            Log.w(
+                "DataDownload",
+                "Official flow HTTP start trigger from $source received no valid target IP; bleIp=$downloadBleIp, groupOwnerIp=$downloadWifiIp, phoneIsGroupOwner=$downloadPhoneIsGroupOwner",
+            )
+            return
         }
 
         Log.i(
@@ -10764,9 +10771,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                 // the best available hint (BLE IP, bridge IP, GO subnet, or interface subnet).
                 if (!didSubnetScan &&
                     downloadP2pConnected &&
-                    downloadResolvedHttpIp == null &&
-                    downloadBleIp == null &&
-                    bleIpBridge.ip.value == null
+                    downloadResolvedHttpIp == null
                 ) {
                     val prefix = guessDownloadSubnetPrefix()
                     if (!prefix.isNullOrBlank()) {

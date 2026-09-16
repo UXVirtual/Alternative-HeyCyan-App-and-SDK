@@ -1076,14 +1076,17 @@ private fun AdvancedControls(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                listOf(
-                    stringResource(Res.string.dashboard_quality_instant),
-                    stringResource(Res.string.dashboard_quality_quick),
-                    stringResource(Res.string.dashboard_quality_smooth),
-                    stringResource(Res.string.dashboard_quality_fine),
-                    stringResource(Res.string.dashboard_quality_clearer),
-                    stringResource(Res.string.dashboard_quality_detailed),
-                )
+                val qualityLabels = buildList {
+                    add(stringResource(Res.string.dashboard_quality_instant))
+                    add(stringResource(Res.string.dashboard_quality_quick))
+                    add(stringResource(Res.string.dashboard_quality_smooth))
+                    add(stringResource(Res.string.dashboard_quality_fine))
+                    add(stringResource(Res.string.dashboard_quality_clearer))
+                    if (state.showDetailedQualityOption) {
+                        add(stringResource(Res.string.dashboard_quality_detailed))
+                    }
+                }
+                qualityLabels
                     .chunked(3)
                     .forEachIndexed { rowIndex, labels ->
                         Row(
@@ -1092,10 +1095,11 @@ private fun AdvancedControls(
                         ) {
                             labels.forEachIndexed { columnIndex, label ->
                                 val sdkValue = rowIndex * 3 + columnIndex
+                                val isDetailedOption = label == stringResource(Res.string.dashboard_quality_detailed)
                                 FilterChip(
                                     selected = state.imageThumbnailQualitySdkValue == sdkValue,
                                     onClick = {
-                                        if (sdkValue == 5) {
+                                        if (isDetailedOption) {
                                             pendingDetailedQuality = sdkValue
                                         } else {
                                             onAction(GlassesDashboardAction.SelectImageThumbnailQuality(sdkValue))

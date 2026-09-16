@@ -21,6 +21,33 @@ class HeyCyanP2pPolicyTest {
     }
 
     @Test
+    fun `prefers the glasses BLE IP and only rejects the default GO address when the phone is the GO`() {
+        assertEquals(
+            "192.168.49.1",
+            HeyCyanP2pPolicy.chooseOfficialTargetIp(
+                bleIp = "192.168.49.10",
+                groupOwnerIp = "192.168.49.1",
+                phoneIsGroupOwner = false,
+            ),
+        )
+        assertEquals(
+            "192.168.49.10",
+            HeyCyanP2pPolicy.chooseOfficialTargetIp(
+                bleIp = "192.168.49.10",
+                groupOwnerIp = "192.168.49.1",
+                phoneIsGroupOwner = true,
+            ),
+        )
+        assertNull(
+            HeyCyanP2pPolicy.chooseOfficialTargetIp(
+                bleIp = null,
+                groupOwnerIp = "192.168.49.1",
+                phoneIsGroupOwner = true,
+            ),
+        )
+    }
+
+    @Test
     fun `builds the official wifi direct name`() {
         assertEquals(
             "W620_DB3E334C9DA2",

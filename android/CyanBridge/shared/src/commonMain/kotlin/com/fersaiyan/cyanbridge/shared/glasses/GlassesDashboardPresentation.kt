@@ -43,6 +43,7 @@ data class GlassesDashboardUiState(
     val showAdvancedDeviceInfo: Boolean = false,
     val showAdvancedDeviceVolume: Boolean = false,
     val showAdvancedImageQuality: Boolean = false,
+    val showDetailedQualityOption: Boolean = true,
     val showAdvancedDeveloperTools: Boolean = false,
     val showAdvancedOta: Boolean = false,
     val showMetaRaybanControls: Boolean = false,

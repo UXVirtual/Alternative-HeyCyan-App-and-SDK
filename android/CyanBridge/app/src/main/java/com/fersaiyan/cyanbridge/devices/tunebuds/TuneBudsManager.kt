@@ -269,6 +269,10 @@ class TuneBudsManager private constructor(context: Context) {
             state.filter { !it.mediaBaseUrl.isNullOrBlank() }.first().mediaBaseUrl
         }
         try {
+            // Allow the phone AP to become reachable before the glasses are asked to switch
+            // to it. Some firmware revisions accept the configuration but only report the
+            // file-manager URL after a short settle period.
+            delay(1500L)
             requireSuccess(
                 request(
                     TuneBudsProtocol.CMD_CONFIGURE_WIFI,
@@ -281,7 +285,9 @@ class TuneBudsManager private constructor(context: Context) {
                 ),
             )
             requireSuccess(request(TuneBudsProtocol.CMD_FILE_MANAGER))
-            withTimeoutOrNull(timeoutMs) { endpoint.await() }
+            val resolved = withTimeoutOrNull(timeoutMs) { endpoint.await() }
+            Log.i(TAG, "TuneBuds file manager endpoint resolved=${resolved != null} baseUrl=$resolved")
+            resolved
         } finally {
             endpoint.cancel()
         }
@@ -439,9 +445,13 @@ class TuneBudsManager private constructor(context: Context) {
                     _state.value = _state.value.copy(storage = storage, lastError = null)
                 }
             }
-            TuneBudsProtocol.CMD_FILE_MANAGER -> if (frame.type == TuneBudsFrameType.NOTIFICATION) {
+            TuneBudsProtocol.CMD_FILE_MANAGER -> if (
+                frame.type == TuneBudsFrameType.NOTIFICATION ||
+                    frame.type == TuneBudsFrameType.RESPONSE
+            ) {
                 TuneBudsProtocol.parseString(frame.payload)?.let { endpoint ->
                     _state.value = _state.value.copy(mediaBaseUrl = endpoint, lastError = null)
+                    Log.i(TAG, "TuneBuds file-manager endpoint payload: $endpoint")
                 }
             }
             TuneBudsProtocol.CMD_MEDIA_COUNTS -> if (frame.type == TuneBudsFrameType.NOTIFICATION) {

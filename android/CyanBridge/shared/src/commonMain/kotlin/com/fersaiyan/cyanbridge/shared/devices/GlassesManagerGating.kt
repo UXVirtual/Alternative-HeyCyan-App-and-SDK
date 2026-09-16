@@ -14,6 +14,7 @@ object GlassesManagerGating {
         TUNEBUDS_CONTROLS,
         CAPTURE_SETTINGS,
         AI_WAKE_WORD_ROUTING,
+        MEDIA_SYNC,
         ADVANCED_CONTROLS,
         ADVANCED_LOCAL_AGENT,
         ADVANCED_DEVICE_INFO,
@@ -34,7 +35,19 @@ object GlassesManagerGating {
 
     fun visibleActions(profile: DeviceProfile?): Set<Action> {
         val selected = profile?.selectedClass ?: DeviceClass.UNKNOWN
-        return visibleActions(selected)
+        val actions = visibleActions(selected).toMutableSet()
+        if (profile != null && isUnsupportedMediaSyncModel(profile)) {
+            actions.remove(Action.MEDIA_SYNC)
+        }
+        return actions
+    }
+
+    private fun isUnsupportedMediaSyncModel(profile: DeviceProfile): Boolean {
+        val advertisedName = profile.advertisedName?.trim().orEmpty()
+        val lower = advertisedName.lowercase()
+        val explicitUnsupportedId = lower == "anko43700141"
+        return profile.selectedClass == DeviceClass.HEY_CYAN &&
+            (explicitUnsupportedId || lower.startsWith("q_") || lower.startsWith("o_"))
     }
 
     fun visibleActions(deviceClass: DeviceClass): Set<Action> {
@@ -44,6 +57,7 @@ object GlassesManagerGating {
                 base.add(Action.HEY_CYAN_EXTRAS)
                 base.add(Action.STATUS_BATTERY)
                 base.add(Action.STATUS_STORAGE)
+                base.add(Action.MEDIA_SYNC)
                 base.addAll(heyCyanAdvancedActions)
                 base.add(Action.CAPTURE_SETTINGS)
                 base.add(Action.AI_WAKE_WORD_ROUTING)

@@ -6,6 +6,31 @@ internal object HeyCyanP2pPolicy {
     fun transferCommandTimedOut(callbackReceived: Boolean, transferEvidenceReceived: Boolean): Boolean =
         !callbackReceived && !transferEvidenceReceived
 
+    fun isLikelyPhoneGroupOwnerAddress(ip: String?): Boolean {
+        return ip?.trim().orEmpty().let { trimmed ->
+            trimmed.isNotEmpty() && trimmed == "192.168.49.1"
+        }
+    }
+
+    fun chooseOfficialTargetIp(
+        bleIp: String?,
+        groupOwnerIp: String?,
+        phoneIsGroupOwner: Boolean?,
+    ): String? {
+        val groupOwner = groupOwnerIp?.trim().orEmpty()
+        val ble = bleIp?.trim().orEmpty()
+
+        if (phoneIsGroupOwner == true) {
+            if (ble.isNotBlank() && !isLikelyPhoneGroupOwnerAddress(ble)) return ble
+            if (groupOwner.isNotBlank() && !isLikelyPhoneGroupOwnerAddress(groupOwner)) return groupOwner
+            return if (ble.isNotBlank()) ble else null
+        }
+
+        if (groupOwner.isNotBlank()) return groupOwner
+        if (ble.isNotBlank()) return ble
+        return null
+    }
+
     @Suppress("UNUSED_PARAMETER")
     fun resetCallbackAllowsRetry(callbackReceived: Boolean, parsedErrorCode: Int): Boolean =
         callbackReceived
