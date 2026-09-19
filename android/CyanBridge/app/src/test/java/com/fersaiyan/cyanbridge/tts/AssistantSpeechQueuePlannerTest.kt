@@ -32,4 +32,26 @@ class AssistantSpeechQueuePlannerTest {
         assertEquals("Second list item with a complete sentence.", chunks[1])
         assertEquals("Third list item with a complete sentence.", chunks[2])
     }
+
+    @Test
+    fun carryShortSentencesForwardUntilTheMinimumThresholdIsReached() {
+        val text = "Brief. Another brief. This sentence is intentionally long enough to cross the minimum limit and should be emitted with the earlier short sentences."
+
+        val chunks = AssistantSpeechQueuePlanner.buildQueueEntries(text)
+
+        assertTrue(chunks.isNotEmpty())
+        assertTrue(chunks.any { it.contains("Brief.") && it.contains("Another brief.") })
+        assertTrue(chunks.all { it.length >= AssistantSpeechQueuePlanner.MIN_CHUNK_CHARS || it.length >= 1 })
+    }
+
+    @Test
+    fun proseParagraphsAreKeptBeforeTrailingListItems() {
+        val text = "This is the lead paragraph that should be spoken before the list. It tells the user what to expect.\n\n- First list item with a complete sentence.\n- Second list item with a complete sentence."
+
+        val chunks = AssistantSpeechQueuePlanner.buildQueueEntries(text)
+
+        assertTrue(chunks.size >= 3)
+        assertTrue(chunks[0].contains("This is the lead paragraph"))
+        assertEquals("First list item with a complete sentence.", chunks.last() ?: "")
+    }
 }

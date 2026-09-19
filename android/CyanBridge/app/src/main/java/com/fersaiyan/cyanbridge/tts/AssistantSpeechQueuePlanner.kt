@@ -10,54 +10,54 @@ object AssistantSpeechQueuePlanner {
             .trim()
         if (normalized.isBlank()) return emptyList()
 
-        val bulletEntries = Regex("(?m)^\\s*(?:[-*•]|\\d+[.)])\\s*(.+)$")
-            .findAll(normalized)
-            .map { it.groupValues[1].trim() }
+        val paragraphs = normalized
+            .split(Regex("\\n\\s*\\n+"))
+            .map { it.trim() }
             .filter { it.isNotBlank() }
-            .toList()
-        if (bulletEntries.isNotEmpty()) {
-            return bulletEntries
-        }
 
-        val trimmed = normalized.replace(Regex("\\s+"), " ").trim()
-        val sentences = Regex("[^.!?]+(?:[.!?]+|$)")
-            .findAll(trimmed)
-            .map { it.value.trim() }
-            .filter { it.isNotBlank() }
-            .toList()
-
-        if (sentences.isEmpty()) {
-            return listOf(trimmed)
+        if (paragraphs.isEmpty()) {
+            return emptyList()
         }
 
         val chunks = mutableListOf<String>()
-        val current = StringBuilder()
+        paragraphs.forEach { paragraph ->
+            val bulletEntries = Regex("(?m)^\\s*(?:[-*•]|\\d+[.)])\\s*(.+)$")
+                .findAll(paragraph)
+                .map { it.groupValues[1].trim() }
+                .filter { it.isNotBlank() }
+                .toList()
 
-        for (sentence in sentences) {
-            val candidate = if (current.isEmpty()) sentence else "${current} $sentence"
-            if (current.isEmpty()) {
-                current.append(sentence)
-                continue
+            if (bulletEntries.isNotEmpty()) {
+                chunks.addAll(bulletEntries)
+                return@forEach
             }
 
-            if (candidate.length >= MIN_CHUNK_CHARS) {
-                chunks.add(candidate.trim())
-                current.setLength(0)
-            } else {
-                current.append(" ").append(sentence)
+            val collapsed = paragraph.replace(Regex("\\s+"), " ").trim()
+            val sentences = Regex("[^.!?]+(?:[.!?]+|$)")
+                .findAll(collapsed)
+                .map { it.value.trim() }
+                .filter { it.isNotBlank() }
+                .toList()
+
+            if (sentences.isEmpty()) {
+                if (collapsed.isNotBlank()) chunks.add(collapsed)
+                return@forEach
+            }
+
+            val current = StringBuilder()
+            sentences.forEachIndexed { index, sentence ->
+                val piece = if (current.isEmpty()) sentence else "${current} $sentence"
+                current.clear()
+                current.append(piece)
+
+                val shouldFlush = current.length >= MIN_CHUNK_CHARS || index == sentences.lastIndex
+                if (shouldFlush) {
+                    chunks.add(current.toString().trim())
+                    current.clear()
+                }
             }
         }
 
-        if (current.isNotBlank()) {
-            val remainder = current.toString().trim()
-            if (chunks.isNotEmpty() && remainder.length < MIN_CHUNK_CHARS) {
-                val lastIndex = chunks.lastIndex
-                chunks[lastIndex] = "${chunks[lastIndex]} $remainder".trim()
-            } else {
-                chunks.add(remainder)
-            }
-        }
-
-        return chunks.ifEmpty { listOf(trimmed) }
+        return chunks.ifEmpty { listOf(normalized) }
     }
 }

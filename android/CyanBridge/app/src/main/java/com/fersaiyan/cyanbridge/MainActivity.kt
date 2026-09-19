@@ -6394,6 +6394,10 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
     private fun handleAiWakeWordActivation(source: String) {
         if (!isAiHijackEnabled) return
+        if (AudioSessionCoordinator.isBusy()) {
+            Log.i("AIHijack", "Ignoring wake activation while speech queue is active source=$source")
+            return
+        }
         val route = AiWakeWordPreferences.route(this)
         Log.i("AIHijack", "AI wake activation source=$source route=$route")
         runOnUiThread {
