@@ -80,6 +80,7 @@ import com.fersaiyan.cyanbridge.shared.chat.ChatThreadStateReducer
 import com.fersaiyan.cyanbridge.shared.chat.ChatThreadUiState
 import com.fersaiyan.cyanbridge.shared.navigation.AppDestination
 import com.fersaiyan.cyanbridge.shared.settings.AgentProviderType
+import com.fersaiyan.cyanbridge.tts.AssistantSpeechQueuePlanner
 import com.fersaiyan.cyanbridge.tts.TtsProviderPreferences
 import com.fersaiyan.cyanbridge.tts.TtsProviderType
 import com.fersaiyan.cyanbridge.ui.appearance.AppearancePreferences
@@ -87,6 +88,7 @@ import com.fersaiyan.cyanbridge.ui.appearance.rememberAppearanceSettings
 import com.fersaiyan.cyanbridge.ui.debug.DebugLogSupport
 import com.fersaiyan.cyanbridge.ui.theme.CyanBridgeTheme
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -129,6 +131,10 @@ class ChatThreadActivity : AppCompatActivity() {
     private var localGenerationRunning by mutableStateOf(false)
     private var localTitleGenerationInProgress: Boolean = false
     private val queuedLocalPrompts = java.util.ArrayDeque<QueuedLocalPrompt>()
+    private val assistantSpeechQueue = java.util.ArrayDeque<String>()
+    private val assistantSpeechQueueLock = Any()
+    private var assistantSpeechPlaybackJob: Job? = null
+    private var activeAssistantSpeechPlayer: MediaPlayer? = null
     private val pendingImagePaths = mutableListOf<String>()
     private var pendingAudioPath: String? = null
     private var audioRecorder: AudioRecord? = null
@@ -1019,6 +1025,18 @@ class ChatThreadActivity : AppCompatActivity() {
         return dir
     }
 
+    private fun flushQueuedAssistantSpeech() {
+        synchronized(assistantSpeechQueueLock) {
+            assistantSpeechPlaybackJob?.cancel()
+            assistantSpeechPlaybackJob = null
+            assistantSpeechQueue.clear()
+            activeAssistantSpeechPlayer?.stop()
+            activeAssistantSpeechPlayer?.release()
+            activeAssistantSpeechPlayer = null
+        }
+        AudioSessionCoordinator.markIdle()
+    }
+
     private fun speakAssistantReply(text: String) {
         val clean = text.trim()
         if (clean.isBlank()) return
@@ -1027,49 +1045,78 @@ class ChatThreadActivity : AppCompatActivity() {
             return
         }
 
-        lifecycleScope.launch {
-            try {
-                Log.i("ChatThreadActivity", "Assistant chat reply TTS selected provider=${TtsProviderPreferences.getProvider(this@ChatThreadActivity)} model=gpt-4o-mini-tts voice=alloy")
-                val file = withContext(Dispatchers.IO) {
-                    RemoteOpenAiClient.generateSpeechToFile(
-                        context = this@ChatThreadActivity,
-                        input = clean,
-                        model = "gpt-4o-mini-tts",
-                        voice = "alloy",
-                        instructions = RemoteOpenAiClient.DEFAULT_SPEECH_INSTRUCTIONS,
-                        responseFormat = "mp3",
-                    )
-                }
-                val player = MediaPlayer()
+        val queueEntries = AssistantSpeechQueuePlanner.buildQueueEntries(clean)
+        if (queueEntries.isEmpty()) return
+
+        synchronized(assistantSpeechQueueLock) {
+            assistantSpeechQueue.clear()
+            assistantSpeechQueue.addAll(queueEntries)
+            if (assistantSpeechPlaybackJob?.isActive == true) {
+                return
+            }
+            assistantSpeechPlaybackJob = lifecycleScope.launch {
                 AudioSessionCoordinator.markBusy()
-                restorePhoneAudioRouteForPlayback("chat assistant OpenAI TTS")
-                player.setAudioAttributes(
-                    android.media.AudioAttributes.Builder()
-                        .setUsage(android.media.AudioAttributes.USAGE_NOTIFICATION)
-                        .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SPEECH)
-                        .build(),
-                )
-                player.setDataSource(file.absolutePath)
-                player.setOnPreparedListener {
-                    Log.i("ChatThreadActivity", "Assistant chat reply TTS prepared file=${file.absolutePath}")
-                    player.start()
-                }
-                player.setOnCompletionListener {
-                    Log.i("ChatThreadActivity", "Assistant chat reply TTS completed file=${file.absolutePath}")
-                    runCatching { player.release() }
+                try {
+                    while (true) {
+                        val nextEntry = synchronized(assistantSpeechQueueLock) {
+                            assistantSpeechQueue.pollFirst()
+                        } ?: break
+                        val file = withContext(Dispatchers.IO) {
+                            RemoteOpenAiClient.generateSpeechToFile(
+                                context = this@ChatThreadActivity,
+                                input = nextEntry,
+                                model = "gpt-4o-mini-tts",
+                                voice = "alloy",
+                                instructions = RemoteOpenAiClient.DEFAULT_SPEECH_INSTRUCTIONS,
+                                responseFormat = "mp3",
+                            )
+                        }
+
+                        val playbackDone = kotlinx.coroutines.CompletableDeferred<Unit>()
+                        val player = MediaPlayer()
+                        activeAssistantSpeechPlayer = player
+                        restorePhoneAudioRouteForPlayback("chat assistant OpenAI TTS")
+                        player.setAudioAttributes(
+                            android.media.AudioAttributes.Builder()
+                                .setUsage(android.media.AudioAttributes.USAGE_NOTIFICATION)
+                                .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SPEECH)
+                                .build(),
+                        )
+                        player.setDataSource(file.absolutePath)
+                        player.setOnPreparedListener {
+                            Log.i("ChatThreadActivity", "Assistant chat reply TTS prepared file=${file.absolutePath} chunk=${nextEntry.length}")
+                            player.start()
+                        }
+                        player.setOnCompletionListener {
+                            Log.i("ChatThreadActivity", "Assistant chat reply TTS completed file=${file.absolutePath}")
+                            runCatching { player.release() }
+                            if (activeAssistantSpeechPlayer === player) {
+                                activeAssistantSpeechPlayer = null
+                            }
+                            playbackDone.complete(Unit)
+                        }
+                        player.setOnErrorListener { _, what, extra ->
+                            Log.w("ChatThreadActivity", "Assistant chat reply TTS error what=$what extra=$extra file=${file.absolutePath}")
+                            runCatching { player.release() }
+                            if (activeAssistantSpeechPlayer === player) {
+                                activeAssistantSpeechPlayer = null
+                            }
+                            playbackDone.complete(Unit)
+                            true
+                        }
+                        player.prepareAsync()
+                        playbackDone.await()
+                    }
+                } catch (t: Throwable) {
+                    Log.w("ChatThreadActivity", "Assistant chat reply TTS failed", t)
+                } finally {
+                    synchronized(assistantSpeechQueueLock) {
+                        assistantSpeechQueue.clear()
+                        activeAssistantSpeechPlayer?.release()
+                        activeAssistantSpeechPlayer = null
+                    }
                     AudioSessionCoordinator.markIdle()
                 }
-                player.setOnErrorListener { _, what, extra ->
-                    Log.w("ChatThreadActivity", "Assistant chat reply TTS error what=$what extra=$extra file=${file.absolutePath}")
-                    runCatching { player.release() }
-                    AudioSessionCoordinator.markIdle()
-                    true
-                }
-                player.prepareAsync()
-                Log.i("ChatThreadActivity", "Assistant chat reply TTS queued file=${file.absolutePath}")
-            } catch (t: Throwable) {
-                Log.w("ChatThreadActivity", "Assistant chat reply TTS failed", t)
-                AudioSessionCoordinator.markIdle()
             }
         }
     }
@@ -1197,6 +1244,7 @@ class ChatThreadActivity : AppCompatActivity() {
         requestSmartTitleAfterReply: Boolean,
         onFinished: (() -> Unit)? = null,
     ) {
+        flushQueuedAssistantSpeech()
         lifecycleScope.launch {
             onAssistantRequestStarted()
             val useLocalStreaming = isLocalModelsProviderSelected()
