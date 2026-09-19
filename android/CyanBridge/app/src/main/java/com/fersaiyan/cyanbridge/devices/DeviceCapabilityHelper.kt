@@ -18,6 +18,7 @@ object DeviceCapabilityHelper {
             DeviceClass.HEY_CYAN,
             DeviceClass.EYEVUE,
             DeviceClass.TUNEBUDS,
+            DeviceClass.VIVE_EAGLE,
             DeviceClass.META_RAYBAN,
             DeviceClass.UNKNOWN,
         )
@@ -28,6 +29,7 @@ object DeviceCapabilityHelper {
             DeviceClass.HEY_CYAN,
             DeviceClass.EYEVUE,
             DeviceClass.TUNEBUDS,
+            DeviceClass.VIVE_EAGLE,
             DeviceClass.META_RAYBAN,
             DeviceClass.UNKNOWN,
         )
@@ -37,7 +39,13 @@ object DeviceCapabilityHelper {
 
     fun hasOnboardStorage(context: Context): Boolean {
         val selected = selectedClass(context)
-        return selected in setOf(DeviceClass.HEY_CYAN, DeviceClass.EYEVUE, DeviceClass.TUNEBUDS, DeviceClass.UNKNOWN)
+        return selected in setOf(
+            DeviceClass.HEY_CYAN,
+            DeviceClass.EYEVUE,
+            DeviceClass.TUNEBUDS,
+            DeviceClass.VIVE_EAGLE,
+            DeviceClass.UNKNOWN,
+        )
     }
 
     fun unavailableCameraReason(context: Context): String? {

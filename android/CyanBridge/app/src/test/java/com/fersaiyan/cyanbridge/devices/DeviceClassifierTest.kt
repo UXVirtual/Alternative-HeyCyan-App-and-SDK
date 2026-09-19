@@ -61,6 +61,12 @@ class DeviceClassifierTest {
     }
 
     @Test
+    fun viveEagle_detectedByName() {
+        assertEquals(DeviceClass.VIVE_EAGLE, DeviceClassifier.guessDeviceClass("VIVE Eagle AI Glasses"))
+        assertEquals(DeviceClass.VIVE_EAGLE, DeviceClassifier.guessDeviceClass("vive eagle"))
+    }
+
+    @Test
     fun genericAudio_detectedByName() {
         assertEquals(DeviceClass.GENERIC_AUDIO, DeviceClassifier.guessDeviceClass("AirPods Pro"))
         assertEquals(DeviceClass.GENERIC_AUDIO, DeviceClassifier.guessDeviceClass("BT Headset"))

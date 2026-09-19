@@ -13,6 +13,12 @@ dependencyResolutionManagement {
         google()
         mavenCentral()
         maven { url = uri("https://jitpack.io") }
+        val viveSdkRepoPath = providers.gradleProperty("viveSdkRepoPath")
+            .orElse("/Users/michael/Downloads/Android_ViveGlassSDK_0.6.0_beta/viveglass_client_0.6.0/repository")
+            .get()
+        maven {
+            url = uri(viveSdkRepoPath)
+        }
         // JetBrains Compose Multiplatform (including Skiko native binaries for iOS).
         // Restrict this repository so unrelated dependencies do not query it.
         maven {

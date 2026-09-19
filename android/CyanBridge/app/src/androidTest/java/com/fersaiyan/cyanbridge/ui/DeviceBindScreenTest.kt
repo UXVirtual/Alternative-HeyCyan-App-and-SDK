@@ -39,6 +39,7 @@ class DeviceBindScreenTest {
                     selectedClass = DeviceClass.HEY_CYAN,
                     onScan = {},
                     onPairMetaGlasses = {},
+                    onPairViveEagleGlasses = {},
                     onSelectDevice = {},
                     onSelectedClassChange = {},
                     onConfirmConnection = {},
@@ -52,6 +53,7 @@ class DeviceBindScreenTest {
         composeRule.onNodeWithText("Signal: -54 dBm").assertExists()
         composeRule.onAllNodesWithText(mac).assertCountEquals(0)
         composeRule.onNodeWithText("Pair Meta Glasses").assertExists()
+        composeRule.onNodeWithText("Pair VIVE Eagle Glasses").assertExists()
     }
 
     @Test
@@ -66,6 +68,7 @@ class DeviceBindScreenTest {
                     selectedClass = DeviceClass.HEY_CYAN,
                     onScan = {},
                     onPairMetaGlasses = { clicked = true },
+                    onPairViveEagleGlasses = {},
                     onSelectDevice = {},
                     onSelectedClassChange = {},
                     onConfirmConnection = {},
@@ -76,6 +79,32 @@ class DeviceBindScreenTest {
         }
 
         composeRule.onNodeWithText("Pair Meta Glasses").performClick()
+        composeRule.runOnIdle { assertTrue(clicked) }
+    }
+
+    @Test
+    fun vivePairButtonLaunchesDedicatedFlow() {
+        var clicked = false
+        composeRule.setContent {
+            CyanBridgeTheme {
+                DeviceBindScreen(
+                    devices = emptyList(),
+                    isScanning = false,
+                    connectingDevice = null,
+                    selectedClass = DeviceClass.HEY_CYAN,
+                    onScan = {},
+                    onPairMetaGlasses = {},
+                    onPairViveEagleGlasses = { clicked = true },
+                    onSelectDevice = {},
+                    onSelectedClassChange = {},
+                    onConfirmConnection = {},
+                    onDismissConnection = {},
+                    onBack = {},
+                )
+            }
+        }
+
+        composeRule.onNodeWithText("Pair VIVE Eagle Glasses").performClick()
         composeRule.runOnIdle { assertTrue(clicked) }
     }
 
@@ -100,6 +129,7 @@ class DeviceBindScreenTest {
                     selectedClass = DeviceClass.HEY_CYAN,
                     onScan = {},
                     onPairMetaGlasses = {},
+                    onPairViveEagleGlasses = {},
                     onSelectDevice = {},
                     onSelectedClassChange = { selected = it },
                     onConfirmConnection = { confirmed = true },

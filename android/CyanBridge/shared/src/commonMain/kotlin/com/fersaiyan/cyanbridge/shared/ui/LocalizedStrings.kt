@@ -18,6 +18,7 @@ import com.fersaiyan.cyanbridge.shared.generated.resources.device_class_meizu_my
 import com.fersaiyan.cyanbridge.shared.generated.resources.device_class_meta_rayban
 import com.fersaiyan.cyanbridge.shared.generated.resources.device_class_tunebuds
 import com.fersaiyan.cyanbridge.shared.generated.resources.device_class_unknown
+import com.fersaiyan.cyanbridge.shared.generated.resources.device_class_vive_eagle
 import com.fersaiyan.cyanbridge.shared.generated.resources.destination_chats_subtitle
 import com.fersaiyan.cyanbridge.shared.generated.resources.destination_glasses_subtitle
 import com.fersaiyan.cyanbridge.shared.generated.resources.destination_media_subtitle
@@ -103,6 +104,7 @@ fun localizedDeviceClass(deviceClass: DeviceClass): String = stringResource(
         DeviceClass.HEY_CYAN -> Res.string.device_class_heycyan
         DeviceClass.EYEVUE -> Res.string.device_class_eye_vue
         DeviceClass.TUNEBUDS -> Res.string.device_class_tunebuds
+        DeviceClass.VIVE_EAGLE -> Res.string.device_class_vive_eagle
         DeviceClass.META_RAYBAN -> Res.string.device_class_meta_rayban
         DeviceClass.MEIZU_MYVU -> Res.string.device_class_meizu_myvu
         DeviceClass.GENERIC_AUDIO -> Res.string.device_class_generic_audio

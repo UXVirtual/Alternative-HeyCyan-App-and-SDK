@@ -136,35 +136,6 @@ class RemoteOpenAiClientTest {
     }
 
     @Test
-    fun responses_api_image_payload_uses_input_image_data_url() {
-        val tempImage = kotlin.io.path.createTempFile(suffix = ".jpg").toFile().apply {
-            writeBytes(byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte(), 0xE0.toByte(), 0x00.toByte(), 0x00.toByte()))
-        }
-
-        val payload = RemoteOpenAiClient.buildChatCompletionPayload(
-            model = "gpt-5.4",
-            messages = listOf(
-                mapOf("role" to "system", "content" to "Answer succinctly"),
-                mapOf("role" to "user", "content" to "Describe this image"),
-            ),
-            maxTokens = 128,
-            temperature = 0.2,
-            imagePaths = listOf(tempImage.absolutePath),
-            apiMode = RemoteOpenAiApiMode.RESPONSES,
-        )
-
-        assertTrue(payload.has("input"))
-        val input = payload.getJSONArray("input")
-        val userItem = input.getJSONObject(1)
-        assertEquals("user", userItem.getString("role"))
-        val content = userItem.getJSONArray("content")
-        assertTrue(content.length() >= 2)
-        assertTrue(content.getJSONObject(0).getString("type") == "input_text" || content.getJSONObject(1).getString("type") == "input_text")
-        assertTrue(content.toString().contains("input_image"))
-        tempImage.delete()
-    }
-
-    @Test
     fun openai_speech_payload_uses_expected_tts_fields() {
         val payload = RemoteOpenAiClient.buildSpeechPayload(
             model = "gpt-4o-mini-tts",

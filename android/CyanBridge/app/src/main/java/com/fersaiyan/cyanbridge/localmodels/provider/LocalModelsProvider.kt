@@ -48,6 +48,32 @@ internal fun buildMultimodalPrompt(
     }
 }
 
+internal fun prepareRemoteVisionRequestMessages(
+    messages: List<Map<String, String>>,
+    fallbackPrompt: String = "Describe this image.",
+): List<Map<String, String>> {
+    val finalUserPrompt = messages.lastOrNull { it["role"]?.equals("user", ignoreCase = true) == true }
+        ?.get("content")
+        ?.trim()
+        ?.takeIf { it.isNotBlank() }
+        ?: fallbackPrompt
+
+    val deduped = messages.filterNot { message ->
+        message["role"]?.equals("user", ignoreCase = true) == true &&
+            message["content"]?.trim().equals(finalUserPrompt, ignoreCase = true) == true &&
+            message !== messages.lastOrNull { it["role"]?.equals("user", ignoreCase = true) == true }
+    }
+
+    return if (deduped.any { message ->
+            message["role"]?.equals("user", ignoreCase = true) == true &&
+                message["content"]?.trim().equals(finalUserPrompt, ignoreCase = true) == true
+        }) {
+        deduped
+    } else {
+        deduped + mapOf("role" to "user", "content" to finalUserPrompt)
+    }
+}
+
 class LocalModelsProvider {
     companion object {
         const val STATUS_MAX_TOKENS_REACHED = "__MAX_TOKENS_REACHED__"
@@ -253,15 +279,21 @@ class LocalModelsProvider {
                     ?.get("content")
                     .orEmpty()
                     .ifBlank { "Describe this image." }
-                val systemPrompt = messages.firstOrNull { it["role"]?.equals("system", ignoreCase = true) == true }
-                    ?.get("content")
-                    ?.takeIf { it.isNotBlank() }
 
-                RemoteOpenAiClient.imageQuery(
+                // RemoteOpenAiClient supports multimodal payloads through the normal chat completion
+                // request, not through a separate imageQuery helper. The helper in CliRelayRouter is a
+                // different transport and should not be invoked here.
+                val remoteMessages = prepareRemoteVisionRequestMessages(
+                    messages = messages,
+                    fallbackPrompt = imageQueryPrompt,
+                )
+                RemoteOpenAiClient.chatCompletionStreaming(
                     context = context,
-                    imagePaths = imagePaths.ifEmpty { listOfNotNull(audioPath) },
-                    prompt = imageQueryPrompt,
-                    systemPrompt = systemPrompt,
+                    messages = remoteMessages,
+                    maxTokens = maxTokens ?: 2048,
+                    onToken = onToken,
+                    imagePaths = imagePaths,
+                    audioPath = audioPath,
                 )
             } else {
                 RemoteOpenAiClient.chatCompletionStreaming(

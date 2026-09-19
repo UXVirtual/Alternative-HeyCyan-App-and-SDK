@@ -12,6 +12,7 @@ object GlassesManagerGating {
         MEIZU_MYVU_CONTROLS,
         EYEVUE_CONTROLS,
         TUNEBUDS_CONTROLS,
+        VIVE_EAGLE_CONTROLS,
         CAPTURE_SETTINGS,
         AI_WAKE_WORD_ROUTING,
         MEDIA_SYNC,
@@ -86,6 +87,16 @@ object GlassesManagerGating {
                 base.add(Action.ADVANCED_CONTROLS)
                 base.add(Action.ADVANCED_DEVICE_INFO)
                 base.add(Action.ADVANCED_IMAGE_QUALITY)
+            }
+            DeviceClass.VIVE_EAGLE -> {
+                base.add(Action.VIVE_EAGLE_CONTROLS)
+                base.add(Action.STATUS_BATTERY)
+                base.add(Action.STATUS_STORAGE)
+                base.add(Action.ADVANCED_CONTROLS)
+                base.add(Action.ADVANCED_DEVICE_INFO)
+                base.add(Action.ADVANCED_IMAGE_QUALITY)
+                base.add(Action.CAPTURE_SETTINGS)
+                base.add(Action.AI_WAKE_WORD_ROUTING)
             }
             else -> {}
         }

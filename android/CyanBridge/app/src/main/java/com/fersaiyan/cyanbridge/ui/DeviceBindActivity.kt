@@ -27,6 +27,7 @@ import com.fersaiyan.cyanbridge.devices.metarayban.MetaRaybanManager
 import com.fersaiyan.cyanbridge.devices.meizumyvu.MeizuMyvuManager
 import com.fersaiyan.cyanbridge.devices.tunebuds.TuneBudsManager
 import com.fersaiyan.cyanbridge.devices.tunebuds.TuneBudsProtocol
+import com.fersaiyan.cyanbridge.devices.vive.ViveEagleManager
 import com.fersaiyan.cyanbridge.devices.ScannedDevice
 import com.fersaiyan.cyanbridge.ui.appearance.AppearancePreferences
 import com.fersaiyan.cyanbridge.ui.appearance.rememberAppearanceSettings
@@ -56,7 +57,8 @@ internal fun consumerProtocolProbeOrder(scanHint: DeviceClass): List<DeviceClass
     DeviceClass.EYEVUE -> listOf(DeviceClass.EYEVUE, DeviceClass.TUNEBUDS, DeviceClass.HEY_CYAN)
     DeviceClass.TUNEBUDS -> listOf(DeviceClass.TUNEBUDS, DeviceClass.EYEVUE, DeviceClass.HEY_CYAN)
     DeviceClass.HEY_CYAN -> listOf(DeviceClass.HEY_CYAN, DeviceClass.EYEVUE, DeviceClass.TUNEBUDS)
-    else -> listOf(DeviceClass.EYEVUE, DeviceClass.TUNEBUDS, DeviceClass.HEY_CYAN)
+    DeviceClass.VIVE_EAGLE -> listOf(DeviceClass.VIVE_EAGLE, DeviceClass.TUNEBUDS, DeviceClass.EYEVUE, DeviceClass.HEY_CYAN)
+    else -> listOf(DeviceClass.EYEVUE, DeviceClass.TUNEBUDS, DeviceClass.HEY_CYAN, DeviceClass.VIVE_EAGLE)
 }
 
 class DeviceBindActivity : BaseActivity() {
@@ -71,6 +73,7 @@ class DeviceBindActivity : BaseActivity() {
     private var connectingDevice by mutableStateOf<ScannedDevice?>(null)
     private var selectedDeviceClass by mutableStateOf(DeviceClass.HEY_CYAN)
     private var initialScanStarted = false
+    private var pendingVivePairing = false
     private var lastDeviceListPublishAtMs = 0L
     private var protocolDetectionActive = false
     private var protocolDetectionJob: Job? = null
@@ -89,6 +92,7 @@ class DeviceBindActivity : BaseActivity() {
                     selectedClass = selectedDeviceClass,
                     onScan = ::startScan,
                     onPairMetaGlasses = ::openMetaPairing,
+                    onPairViveEagleGlasses = ::openVivePairing,
                     onSelectDevice = { sharedDevice ->
                         val device = deviceList.firstOrNull {
                             it.macAddress.equals(sharedDevice.macAddress, ignoreCase = true)
@@ -115,6 +119,37 @@ class DeviceBindActivity : BaseActivity() {
 
     override fun onResume() {
         super.onResume()
+        if (pendingVivePairing) {
+            pendingVivePairing = false
+            Log.i(TAG, "onResume: returned from Android Bluetooth settings after VIVE pairing; restarting scan and reconnect")
+            startScan()
+            val selected = DeviceProfileStore.loadLastSelected(this)
+            when (selected?.selectedClass) {
+                DeviceClass.VIVE_EAGLE -> {
+                    val mac = selected.macAddress.takeIf { it.isNotBlank() }
+                        ?: findBondedViveMacAddress()
+                    if (mac != null) {
+                        DeviceProfileStore.saveLastSelected(
+                            this,
+                            DeviceProfile(
+                                macAddress = mac,
+                                advertisedName = selected.advertisedName ?: "VIVE Eagle AI Glasses",
+                                detectedClass = DeviceClass.VIVE_EAGLE,
+                                selectedClass = DeviceClass.VIVE_EAGLE,
+                                userOverridden = false,
+                            ),
+                        )
+                        Log.i(TAG, "onResume: recovered VIVE bonded MAC=$mac after Android pairing")
+                        AutoPairManager.requestConnectToMac(this, mac, "vive_pairing_return")
+                    } else {
+                        Log.w(TAG, "onResume: VIVE pairing returned but no bonded VIVE MAC was available")
+                        AutoPairManager.requestConnect(this, "vive_pairing_return")
+                    }
+                }
+                else -> {}
+            }
+            return
+        }
         if (!initialScanStarted) {
             initialScanStarted = true
             startScan()
@@ -138,6 +173,48 @@ class DeviceBindActivity : BaseActivity() {
             ),
         )
         startActivity(Intent(this, MetaPairingActivity::class.java))
+    }
+
+    /** VIVE Eagle devices are commonly hidden from the generic BLE scan list unless they are paired in Android first. */
+    private fun openVivePairing() {
+        pendingVivePairing = true
+        Log.i(TAG, "openVivePairing: launching Android Bluetooth settings for VIVE Eagle direct pairing flow")
+        stopScan()
+        DeviceProfileStore.saveLastSelected(
+            this,
+            DeviceProfile(
+                macAddress = "",
+                advertisedName = "VIVE Eagle AI Glasses",
+                detectedClass = DeviceClass.VIVE_EAGLE,
+                selectedClass = DeviceClass.VIVE_EAGLE,
+                userOverridden = false,
+            ),
+        )
+        Log.i(TAG, "openVivePairing: saved selected profile=${DeviceClass.VIVE_EAGLE.name} macAddress=<empty> for OS pairing flow")
+        Toast.makeText(
+            this,
+            "Pair VIVE Eagle Glasses in Android Bluetooth settings, then tap Back to return to CyanBridge.",
+            Toast.LENGTH_LONG,
+        ).show()
+        startActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS))
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun findBondedViveMacAddress(): String? {
+        if (!hasBluetooth(this)) return null
+        val adapter = BluetoothAdapter.getDefaultAdapter() ?: return null
+        val bonded = try {
+            adapter.bondedDevices
+        } catch (_: SecurityException) {
+            return null
+        }
+        return bonded.firstOrNull { device ->
+            val name = device.name.orEmpty()
+            name.contains("vive", ignoreCase = true) ||
+                name.contains("eagle", ignoreCase = true) ||
+                name.contains("VIVE", ignoreCase = true) ||
+                name.contains("EAGLE", ignoreCase = true)
+        }?.address
     }
 
     @Subscribe(threadMode = ThreadMode.MAIN)
@@ -208,9 +285,21 @@ class DeviceBindActivity : BaseActivity() {
             DeviceClass.HEY_CYAN,
             DeviceClass.EYEVUE,
             DeviceClass.TUNEBUDS,
+            DeviceClass.VIVE_EAGLE,
             DeviceClass.UNKNOWN,
             -> detectAndConnectConsumerGlasses(device)
         }
+    }
+
+    private fun connectViveEagle(device: ScannedDevice) {
+        Log.i(
+            TAG,
+            "connectViveEagle: selectedDevice=${device.advertisedName ?: "unknown"} mac=${device.macAddress} connectionAddress=${device.connectionAddress} detectedClass=${device.detectedClass}",
+        )
+        saveSelectedProfile(device, DeviceClass.VIVE_EAGLE, userOverridden = true)
+        ViveEagleManager.getInstance(this).connect(device.macAddress, device.advertisedName)
+        Toast.makeText(this, "Connecting to VIVE Eagle AI Glasses…", Toast.LENGTH_SHORT).show()
+        finish()
     }
 
     /**
@@ -266,6 +355,7 @@ class DeviceBindActivity : BaseActivity() {
                     DeviceClass.EYEVUE -> probeEyevue(device)
                     DeviceClass.TUNEBUDS -> probeTuneBuds(device)
                     DeviceClass.HEY_CYAN -> probeHeyCyan(device)
+                    DeviceClass.VIVE_EAGLE -> probeViveEagle(device)
                     else -> false
                 }
             } catch (cancelled: CancellationException) {
@@ -354,6 +444,32 @@ class DeviceBindActivity : BaseActivity() {
         }
     }
 
+    private suspend fun probeViveEagle(device: ScannedDevice): Boolean {
+        if (device.detectedClass != DeviceClass.VIVE_EAGLE &&
+            !device.advertisedName.orEmpty().contains("vive", ignoreCase = true) &&
+            !device.advertisedName.orEmpty().contains("eagle", ignoreCase = true)
+        ) {
+            Log.i(TAG, "probeViveEagle: skipping non-VIVE device name=${device.advertisedName} detectedClass=${device.detectedClass}")
+            return false
+        }
+        Log.i(
+            TAG,
+            "probeViveEagle: attempting protocol detection for name=${device.advertisedName} mac=${device.macAddress} connectionAddress=${device.connectionAddress} detectedClass=${device.detectedClass}",
+        )
+        val manager = ViveEagleManager.getInstance(this)
+        manager.disconnect()
+        manager.connect(device.macAddress, device.advertisedName)
+        val response = withTimeoutOrNull(4_000L) {
+            manager.state
+                .filter { state -> state.protocolState == "CONNECTED" || state.protocolState == "ERROR" }
+                .first()
+        }
+        val identified = response?.protocolState == "CONNECTED"
+        Log.i(TAG, "probeViveEagle: response=${response?.protocolState ?: "null"} identified=$identified")
+        if (!identified) manager.disconnect()
+        return identified
+    }
+
     /**
      * Remove duration choices from the UI and choose the highest known safe value automatically.
      * TuneBuds reports video/audio limits as capabilities and has no writable duration command in
@@ -374,6 +490,10 @@ class DeviceBindActivity : BaseActivity() {
 
             DeviceClass.TUNEBUDS -> {
                 TuneBudsManager.getInstance(this).refreshStatus()
+            }
+
+            DeviceClass.VIVE_EAGLE -> {
+                ViveEagleManager.getInstance(this).setRecordingDuration(600)
             }
 
             else -> Unit

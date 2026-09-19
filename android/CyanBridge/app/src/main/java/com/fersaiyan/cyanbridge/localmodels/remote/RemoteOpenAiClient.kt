@@ -117,48 +117,6 @@ object RemoteOpenAiClient {
         return postJsonStreaming(url, apiKey, payload, onToken)
     }
 
-    suspend fun imageQuery(
-        context: Context,
-        imagePaths: List<String>,
-        prompt: String? = null,
-        systemPrompt: String? = null,
-        modelOverride: String? = null,
-    ): String {
-        require(imagePaths.isNotEmpty()) { "Remote image query requires at least one image path" }
-
-        val baseUrl = RemoteOpenAiPrefs.getBaseUrl(context)
-        val apiKey = RemoteOpenAiPrefs.getApiKey(context)
-        val apiMode = RemoteOpenAiPrefs.getApiMode(context)
-        val model = modelOverride?.trim()?.takeIf { it.isNotBlank() }
-            ?: RemoteOpenAiPrefs.getModel(context)
-
-        require(baseUrl.isNotBlank()) { "Remote server base URL is not configured" }
-        require(model.isNotBlank()) { "Remote server model name is not configured" }
-        require(apiKey.isBlank() || RemoteOpenAiPrefs.isCredentialTransportAllowed(baseUrl)) {
-            "Refusing to send an API key over a public cleartext URL"
-        }
-
-        val messages = buildList {
-            systemPrompt?.trim()?.takeIf { it.isNotBlank() }?.let { add(mapOf("role" to "system", "content" to it)) }
-            add(mapOf("role" to "user", "content" to (prompt ?: "Describe this image.")))
-        }
-
-        val payload = buildChatCompletionPayload(
-            model = model,
-            messages = messages,
-            maxTokens = 1024,
-            temperature = 0.2,
-            stream = true,
-            imagePaths = imagePaths,
-            apiMode = apiMode,
-        )
-
-        val url = buildRequestUrl(baseUrl, apiMode)
-        Log.i(TAG, "imageQuery -> $url model=$model apiMode=${apiMode.name} images=${imagePaths.size}")
-        val streamed = postJsonStreaming(url, apiKey, payload, null)
-        return streamed.ifBlank { "I couldn't analyze that image right now. Please try again." }
-    }
-
     suspend fun generateSpeechToFile(
         context: Context,
         input: String,

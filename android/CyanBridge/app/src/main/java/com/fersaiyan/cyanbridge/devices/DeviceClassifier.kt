@@ -54,6 +54,14 @@ object DeviceClassifier {
             return DeviceClass.TUNEBUDS
         }
 
+        if (lower.contains("vive") && (lower.contains("eagle") || lower.contains("ai glasses"))) {
+            return DeviceClass.VIVE_EAGLE
+        }
+
+        if (lower.contains("eagle") && lower.contains("vive")) {
+            return DeviceClass.VIVE_EAGLE
+        }
+
         // HeyCyan-class heuristics (already used elsewhere in the app).
         if (
             lower.contains("heycyan") ||

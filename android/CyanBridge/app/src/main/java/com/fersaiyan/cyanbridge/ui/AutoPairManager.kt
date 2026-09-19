@@ -12,6 +12,7 @@ import com.fersaiyan.cyanbridge.devices.DeviceProfileStore
 import com.fersaiyan.cyanbridge.devices.eyevue.EyevueManager
 import com.fersaiyan.cyanbridge.devices.meizumyvu.MeizuMyvuManager
 import com.fersaiyan.cyanbridge.devices.tunebuds.TuneBudsManager
+import com.fersaiyan.cyanbridge.devices.vive.ViveEagleManager
 import com.fersaiyan.cyanbridge.shared.devices.DeviceClass
 import com.hjq.permissions.Permission
 import com.hjq.permissions.XXPermissions
@@ -98,6 +99,13 @@ object AutoPairManager {
                         continue
                     }
                 }
+                if (selectedClass == DeviceClass.VIVE_EAGLE) {
+                    if (ViveEagleManager.getInstance(appContext).isConnected()) {
+                        backoffMs = 5_000L
+                        delay(20_000L)
+                        continue
+                    }
+                }
                 if (connected && selectedClass != DeviceClass.MEIZU_MYVU) {
                     if (selectedClass == DeviceClass.HEY_CYAN) scheduleHeyCyanMaximumDurations()
                     backoffMs = 5_000L
@@ -164,6 +172,15 @@ object AutoPairManager {
             TuneBudsManager.getInstance(context).connect(mac)
             return
         }
+        if (DeviceProfileStore.selectedClass(context) == DeviceClass.VIVE_EAGLE) {
+            if (suppressAutoReconnect) {
+                Log.d(TAG, "Skipping VIVE Eagle reconnect ($reason): suppressed")
+                return
+            }
+            Log.i(TAG, "requestConnectToMac: VIVE_EAGLE direct connect path selected reason=$reason mac=$mac")
+            ViveEagleManager.getInstance(context).connect(mac)
+            return
+        }
         if (DeviceProfileStore.isMetaSelected(context) || DeviceProfileStore.isMeizuMyvuSelected(context)) {
             Log.d(TAG, "Skipping vendor reconnect for selected non-HeyCyan glasses ($reason)")
             return
@@ -228,6 +245,29 @@ object AutoPairManager {
             name.startsWith("Q_")
     }
 
+    fun normalizeReconnectAddress(rawAddress: String?, selectedClass: DeviceClass? = null): String? {
+        val candidate = normalizeAddressCandidate(rawAddress) ?: run {
+            val rejected = rawAddress?.trim().orEmpty()
+            if (rejected.isNotBlank()) {
+                Log.w(TAG, "Ignoring invalid reconnect address for selectedClass=${selectedClass ?: "unknown"}: $rejected")
+            }
+            return null
+        }
+        return candidate
+    }
+
+    internal fun normalizeAddressCandidate(rawAddress: String?): String? {
+        val candidate = rawAddress?.trim().takeIf { !it.isNullOrBlank() } ?: return null
+        return candidate.takeIf(::isValidBluetoothAddress)
+    }
+
+    internal fun isValidBluetoothAddress(candidate: String): Boolean {
+        if (candidate.length != 17) return false
+        val parts = candidate.split(":")
+        if (parts.size != 6) return false
+        return parts.all { it.length == 2 && it.all { ch -> ch.isDigit() || ch.lowercaseChar() in 'a'..'f' } }
+    }
+
     private fun getTargetMac(context: Context): String? {
         // Pairing persists the user's explicit selection independently of the vendor SDK.
         // Prefer it so devices with names outside our fallback heuristics still reconnect.
@@ -244,17 +284,15 @@ object AutoPairManager {
             Log.d(TAG, "Skipping vendor reconnect for selected Meta Ray-Ban")
             return null
         }
-        val profileMac = profile
-            ?.macAddress
-            ?.trim()
-            ?.takeIf { it.isNotBlank() }
+        val profileMac = normalizeReconnectAddress(profile?.macAddress, profile?.selectedClass)
         if (profileMac != null) {
             updateSdkReconnectMac(profileMac)
             return profileMac
         }
 
         val saved = DeviceManager.getInstance().deviceAddress
-        if (!saved.isNullOrBlank()) return saved
+        val normalizedSaved = normalizeReconnectAddress(saved)
+        if (normalizedSaved != null) return normalizedSaved
 
         if (!canReadBluetoothState(context)) return null
         val adapter = BluetoothAdapter.getDefaultAdapter() ?: return null
@@ -265,7 +303,7 @@ object AutoPairManager {
         } ?: return null
 
         val candidate = bonded.firstOrNull { looksLikeGlasses(context, it) } ?: return null
-        val mac = candidate.address
+        val mac = normalizeReconnectAddress(candidate.address) ?: return null
 
         updateSdkReconnectMac(mac)
 
@@ -322,7 +360,11 @@ object AutoPairManager {
 
         val mac = getTargetMac(context)
         if (mac.isNullOrBlank()) {
-            Log.d(TAG, "Skipping auto-pair ($reason): no saved/bonded glasses MAC")
+            Log.d(TAG, "Skipping auto-pair ($reason): no valid saved/bonded glasses MAC")
+            return false
+        }
+        val validMac = normalizeReconnectAddress(mac, profile?.selectedClass) ?: run {
+            Log.d(TAG, "Skipping auto-pair ($reason): invalid reconnect MAC=$mac")
             return false
         }
 
@@ -339,13 +381,13 @@ object AutoPairManager {
             return false
         }
 
-        Log.i(TAG, "Auto-pair ($reason): connectDirectly($mac) selectedClass=${profile?.selectedClass ?: "unknown"} connected=${mgr.isConnected}")
+        Log.i(TAG, "Auto-pair ($reason): connectDirectly($validMac) selectedClass=${profile?.selectedClass ?: "unknown"} connected=${mgr.isConnected}")
         try {
-            mgr.reConnectMac = mac
+            mgr.reConnectMac = validMac
         } catch (_: Throwable) {
             // Optional; some SDK builds may not expose this.
         }
-        mgr.connectDirectly(mac)
+        mgr.connectDirectly(validMac)
         if (profile?.selectedClass == DeviceClass.HEY_CYAN) scheduleHeyCyanMaximumDurations()
         return true
     }
@@ -355,15 +397,19 @@ object AutoPairManager {
             Log.d(TAG, "Skipping auto-pair ($reason): suppressed")
             return false
         }
-        if (mac.isBlank()) return false
+        val validMac = normalizeReconnectAddress(mac, DeviceProfileStore.selectedClass(context))
+        if (validMac == null) {
+            Log.d(TAG, "Skipping auto-pair ($reason): invalid reconnect MAC=$mac")
+            return false
+        }
         if (!isBluetoothEnabled()) return false
 
         if (DeviceProfileStore.selectedClass(context) == DeviceClass.EYEVUE) {
-            connectEyevueWithMaximumDuration(context, mac, null)
+            connectEyevueWithMaximumDuration(context, validMac, null)
             return true
         }
         if (DeviceProfileStore.selectedClass(context) == DeviceClass.TUNEBUDS) {
-            TuneBudsManager.getInstance(context).connect(mac)
+            TuneBudsManager.getInstance(context).connect(validMac)
             return true
         }
 
@@ -381,12 +427,12 @@ object AutoPairManager {
             return false
         }
 
-        Log.i(TAG, "Auto-pair ($reason): connectDirectly($mac) selectedClass=${DeviceProfileStore.selectedClass(context)} connected=${mgr.isConnected}")
+        Log.i(TAG, "Auto-pair ($reason): connectDirectly($validMac) selectedClass=${DeviceProfileStore.selectedClass(context)} connected=${mgr.isConnected}")
         try {
-            mgr.reConnectMac = mac
+            mgr.reConnectMac = validMac
         } catch (_: Throwable) {
         }
-        mgr.connectDirectly(mac)
+        mgr.connectDirectly(validMac)
         if (DeviceProfileStore.selectedClass(context) == DeviceClass.HEY_CYAN) {
             scheduleHeyCyanMaximumDurations()
         }

@@ -111,6 +111,7 @@ import com.fersaiyan.cyanbridge.devices.tunebuds.TuneBudsLocalHotspot
 import com.fersaiyan.cyanbridge.devices.tunebuds.TuneBudsMediaSync
 import com.fersaiyan.cyanbridge.devices.tunebuds.TuneBudsMediaType
 import com.fersaiyan.cyanbridge.devices.tunebuds.isSupportedForTuneBudsDashboard
+import com.fersaiyan.cyanbridge.devices.vive.ViveEagleManager
 import com.fersaiyan.cyanbridge.shared.devices.GlassesManagerGating
 import com.fersaiyan.cyanbridge.privacy.PrivacyPrefs
 import com.fersaiyan.cyanbridge.ui.MyApplication
@@ -374,17 +375,21 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                             voice = "alloy",
                             instructions = RemoteOpenAiClient.DEFAULT_SPEECH_INSTRUCTIONS,
                             responseFormat = "mp3",
+                            forceRefresh = !TtsProviderPreferences.getUseCache(this@MainActivity),
                         )
                     }
                     val player = android.media.MediaPlayer()
                     AudioSessionCoordinator.markBusy()
                     restorePhoneAudioRouteForPlayback("assistant OpenAI TTS")
-                    player.setAudioAttributes(
-                        android.media.AudioAttributes.Builder()
-                            .setUsage(android.media.AudioAttributes.USAGE_NOTIFICATION)
-                            .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SPEECH)
-                            .build(),
-                    )
+                    val attrs = android.media.AudioAttributes.Builder()
+                        .setUsage(if (streamType == android.media.AudioManager.STREAM_VOICE_CALL) {
+                            android.media.AudioAttributes.USAGE_VOICE_COMMUNICATION
+                        } else {
+                            android.media.AudioAttributes.USAGE_NOTIFICATION
+                        })
+                        .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SPEECH)
+                        .build()
+                    player.setAudioAttributes(attrs)
                     player.setDataSource(file.absolutePath)
                     player.setOnPreparedListener {
                         Log.i(TAG, "OpenAI TTS prepared id=$id file=${file.absolutePath}")
@@ -694,6 +699,8 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private val eyevueAiPhotoInProgress = AtomicBoolean(false)
     private var tuneBudsManager: TuneBudsManager? = null
     private var tuneBudsUiJob: Job? = null
+    private var viveEagleManager: ViveEagleManager? = null
+    private var viveEagleUiJob: Job? = null
     private val tuneBudsAiPhotoInProgress = AtomicBoolean(false)
 
     private val metaAndroidPermissionLauncher =
@@ -1337,6 +1344,28 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                                         "Photos: ${it.images}  Videos: ${it.videos}  Audio: ${it.audio}"
                                     } ?: state.transfer.countsLabel,
                                 ),
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+    private fun getOrCreateViveEagleManager(): ViveEagleManager =
+        viveEagleManager ?: ViveEagleManager.getInstance(this).also { manager ->
+            viveEagleManager = manager
+            if (viveEagleUiJob == null) {
+                viveEagleUiJob = lifecycleScope.launch {
+                    manager.state.collect { vive ->
+                        if (!DeviceProfileStore.isViveEagleSelected(this@MainActivity)) return@collect
+                        binding.statusText.text = vive.connectionLabel
+                        binding.storageText.text = "--"
+                        updateBatteryText(vive.batteryPercent)
+                        updateDashboardState { state ->
+                            state.copy(
+                                connectionLabel = vive.connectionLabel,
+                                batteryPercent = vive.batteryPercent,
+                                storageLabel = "--",
                             )
                         }
                     }
@@ -4312,7 +4341,9 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             onReplySpoken?.invoke()
             Unit
         }
-        val localSpeechSessionId = if (providerType == AgentProviderType.LOCAL_AGENT) {
+        val usesLocalStreamingSpeech = providerType == AgentProviderType.LOCAL_AGENT &&
+            TtsProviderPreferences.getProvider(this) != TtsProviderType.OPENAI_GPT4O_MINI_TTS
+        val localSpeechSessionId = if (usesLocalStreamingSpeech) {
             localSpeechSessionManager.startNewSession(
                 languageTag = ImageQuestionPreferences.get(this).appLanguageTag,
                 onSpeechCompleted = onSpeechCompleted,
@@ -4444,8 +4475,8 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                     "Image query completed provider=${effectiveProvider} originalProvider=$providerType replyLength=${replyToSpeak.length}",
                 )
                 runOnUiThread {
-                    if (providerType == AgentProviderType.LOCAL_AGENT) {
-                        localSpeechSessionId?.let(localSpeechSessionManager::onModelGenerationCompleted)
+                    if (localSpeechSessionId != null) {
+                        localSpeechSessionManager.onModelGenerationCompleted(localSpeechSessionId)
                     } else {
                         speakVision(replyToSpeak, onDone = onSpeechCompleted)
                     }
@@ -5796,6 +5827,32 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
     private fun restorePhoneAudioRouteForPlayback(reason: String) {
         val audioManager = getSystemService(Context.AUDIO_SERVICE) as? android.media.AudioManager ?: return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val current = audioManager.communicationDevice
+            if (current != null &&
+                current.type != android.media.AudioDeviceInfo.TYPE_BUILTIN_SPEAKER &&
+                current.type != android.media.AudioDeviceInfo.TYPE_BUILTIN_EARPIECE
+            ) {
+                Log.i(
+                    "ImageQuestionAudio",
+                    "Keeping active non-phone communication route for $reason device=${current.type}:${current.productName}",
+                )
+                return
+            }
+
+            val preferredBluetoothRoute = audioManager.availableCommunicationDevices.firstOrNull {
+                it.type == android.media.AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
+                    it.type == android.media.AudioDeviceInfo.TYPE_BLE_HEADSET
+            }
+            if (preferredBluetoothRoute != null) {
+                val selected = audioManager.setCommunicationDevice(preferredBluetoothRoute)
+                Log.i(
+                    "ImageQuestionAudio",
+                    "Restored active Bluetooth/glasses route for $reason device=${preferredBluetoothRoute.type}:${preferredBluetoothRoute.productName} selected=$selected",
+                )
+                return
+            }
+        }
         clearStaleBluetoothAudioRoute(audioManager, reason)
         runCatching {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -6668,6 +6725,21 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             updateDeviceClassText()
             return
         }
+        if (DeviceProfileStore.isViveEagleSelected(this)) {
+            val vive = getOrCreateViveEagleManager().state.value
+            binding.statusText.text = vive.connectionLabel
+            binding.storageText.text = "--"
+            updateBatteryText(vive.batteryPercent)
+            updateDashboardState { state ->
+                state.copy(
+                    connectionLabel = vive.connectionLabel,
+                    batteryPercent = vive.batteryPercent,
+                    storageLabel = "--",
+                )
+            }
+            updateDeviceClassText()
+            return
+        }
         if (isMeizuMyvuSelected()) {
             val myvu = getOrCreateMeizuMyvuManager().state.value
             binding.statusText.text = myvu.connectionLabel
@@ -6939,6 +7011,9 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             if (isEyevueSelected()) getOrCreateEyevueManager().requestBattery()
             if (isTuneBudsSelected()) {
                 getOrCreateTuneBudsManager().takeIf { it.isConnected() }?.requestBattery()
+            }
+            if (DeviceProfileStore.isViveEagleSelected(this)) {
+                getOrCreateViveEagleManager().takeIf { it.isConnected() }?.requestBattery()
             }
         }
 
