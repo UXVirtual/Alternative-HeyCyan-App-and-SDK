@@ -641,6 +641,8 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private var pendingImageCaptureStartedAtMs: Long = 0L
     private var mediaDownloadPurpose = MediaDownloadPurpose.FULL_SYNC
     private var highQualityImageRequest: HighQualityImageRequest? = null
+    private var manualFullResSaveCallback: ((File) -> Unit)? = null
+    private var syncAllRemainingPhotosMode = false
     private var lastGlassesPreviewFile: File? = null
     private var lastImageQueryAtMs: Long = 0L
     private var activeParallelAudioQuestionDeferred: kotlinx.coroutines.CompletableDeferred<String?>? = null
@@ -1756,6 +1758,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             GlassesDashboardAction.TestImageQuestion -> binding.btnTestHijackImage.performClick()
             GlassesDashboardAction.CaptureAndPreviewGlassesImage -> previewCapturedGlassesImageFromUi()
             GlassesDashboardAction.PreviewLastGlassesImage -> previewLastCapturedGlassesImageFromUi()
+            GlassesDashboardAction.SaveFullResGlassesImage -> syncAllRemainingHeyCyanPhotosToGallery()
             GlassesDashboardAction.OpenExternalImageAutomationDiagnostics -> {
                 startActivity(Intent(this, ExternalAssistantAutomationSetupActivity::class.java))
             }
@@ -4320,7 +4323,13 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
         val queryJob = CoroutineScope(Dispatchers.IO).launch {
             try {
-                val finalReply = when (providerType) {
+                val effectiveProvider = if (RemoteOpenAiPrefs.isActive(this@MainActivity)) {
+                    AgentProviderType.LOCAL_AGENT
+                } else {
+                    providerType
+                }
+
+                val finalReply = when (effectiveProvider) {
                     AgentProviderType.PRO_SUBSCRIPTION -> {
                         val visionResult = CliRelayClient.imageQuery(
                             context = this@MainActivity,
@@ -4334,16 +4343,30 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                             Log.e("AIHijack", "Image query failed: $errorMsg")
                             runOnUiThread {
                                 Toast.makeText(this@MainActivity, "Vision error: ${errorMsg.take(80)}", Toast.LENGTH_LONG).show()
+                                val imageFile = File(imagePath)
+                                if (imageFile.exists() && imageFile.canRead()) {
+                                    showCapturedImagePreview(imageFile)
+                                }
                             }
                             "I couldn't analyze the image. Please try again."
                         } else {
                             val visionReply = visionResult.getOrNull()?.trim() ?: ""
                             if (visionReply.isBlank()) {
+                                runOnUiThread {
+                                    val imageFile = File(imagePath)
+                                    if (imageFile.exists() && imageFile.canRead()) {
+                                        showCapturedImagePreview(imageFile)
+                                    }
+                                }
                                 "I couldn't analyze that image right now. Please try again."
                             } else if (looksLikeVisionFailed(visionReply)) {
                                 Log.w("AIHijack", "Vision relay couldn't process image. Reply: ${visionReply.take(100)}")
                                 runOnUiThread {
                                     Toast.makeText(this@MainActivity, "Vision model couldn't process image", Toast.LENGTH_LONG).show()
+                                    val imageFile = File(imagePath)
+                                    if (imageFile.exists() && imageFile.canRead()) {
+                                        showCapturedImagePreview(imageFile)
+                                    }
                                 }
                                 "I couldn't analyze the image. Please try again."
                             } else {
@@ -4385,11 +4408,21 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                             Log.e("AIHijack", "Image query failed: $errorMsg")
                             runOnUiThread {
                                 Toast.makeText(this@MainActivity, "Vision error: ${errorMsg.take(80)}", Toast.LENGTH_LONG).show()
+                                val imageFile = File(imagePath)
+                                if (imageFile.exists() && imageFile.canRead()) {
+                                    showCapturedImagePreview(imageFile)
+                                }
                             }
                             "I couldn't analyze the image. Please try again."
                         } else {
                             val visionReply = visionResult.getOrNull()?.trim() ?: ""
                             if (visionReply.isBlank()) {
+                                runOnUiThread {
+                                    val imageFile = File(imagePath)
+                                    if (imageFile.exists() && imageFile.canRead()) {
+                                        showCapturedImagePreview(imageFile)
+                                    }
+                                }
                                 "I couldn't analyze that image right now. Please try again."
                             } else {
                                 visionReply
@@ -4408,7 +4441,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                 }
                 Log.i(
                     "AIHijack",
-                    "Image query completed provider=$providerType replyLength=${replyToSpeak.length}",
+                    "Image query completed provider=${effectiveProvider} originalProvider=$providerType replyLength=${replyToSpeak.length}",
                 )
                 runOnUiThread {
                     if (providerType == AgentProviderType.LOCAL_AGENT) {
@@ -4773,6 +4806,94 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         }
     }
 
+    private fun saveFullResolutionGlassesImageToCameraRoll() {
+        if (!isHeyCyanSelected()) {
+            Toast.makeText(this, "Save full res is only available for HeyCyan glasses.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (!BleOperateManager.getInstance().isConnected) {
+            Toast.makeText(this, "Connect HeyCyan glasses first.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (manualFullResSaveCallback != null) {
+            Toast.makeText(this, "A full-resolution download is already in progress.", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        manualFullResSaveCallback = { fullResFile ->
+            lifecycleScope.launch(Dispatchers.IO) {
+                val result = runCatching {
+                    fullResFile.inputStream().use { input ->
+                        saveJpegToGallery(input, fullResFile.name, fullResFile.lastModified())
+                    }
+                }.getOrElse {
+                    GallerySaveResult(false, null, 0)
+                }
+
+                withContext(Dispatchers.Main) {
+                    if (result.success && result.uri != null) {
+                        Toast.makeText(
+                            this@MainActivity,
+                            "Saved full-resolution image to camera roll. ${fullResFile.name}",
+                            Toast.LENGTH_LONG,
+                        ).show()
+                    } else {
+                        Toast.makeText(
+                            this@MainActivity,
+                            "Could not save the full-resolution JPEG to the camera roll.",
+                            Toast.LENGTH_LONG,
+                        ).show()
+                    }
+                }
+            }
+        }
+
+        highQualityImageRequest = HighQualityImageRequest(
+            sourceTag = "manual_full_res_save",
+            captureStartedAtMs = System.currentTimeMillis(),
+        )
+        mediaDownloadPurpose = MediaDownloadPurpose.IMAGE_QUESTION
+        setTransferUiVisible(true)
+        setTransferFlowLabel(GlassesSyncFlow.CUSTOM)
+        setTransferDetail("Preparing full-resolution save...")
+        lifecycleScope.launch {
+            delay(300)
+            if (highQualityImageRequest == null) return@launch
+            startDataDownload(
+                mode = GlassesSyncFlow.CUSTOM,
+                purpose = MediaDownloadPurpose.IMAGE_QUESTION,
+            )
+        }
+    }
+
+    private fun syncAllRemainingHeyCyanPhotosToGallery() {
+        if (!isHeyCyanSelected()) {
+            Toast.makeText(this, "Sync remaining photos is only available for HeyCyan glasses.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (!BleOperateManager.getInstance().isConnected) {
+            Toast.makeText(this, "Connect HeyCyan glasses first.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (manualFullResSaveCallback != null) {
+            Toast.makeText(this, "A full-resolution download is already in progress.", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        syncAllRemainingPhotosMode = true
+        setTransferUiVisible(true)
+        setTransferFlowLabel(GlassesSyncFlow.CUSTOM)
+        setTransferDetail("Preparing remaining photo sync...")
+        lifecycleScope.launch {
+            delay(300)
+            if (!syncAllRemainingPhotosMode) return@launch
+            startDataDownload(
+                mode = GlassesSyncFlow.CUSTOM,
+                purpose = MediaDownloadPurpose.FULL_SYNC,
+            )
+        }
+    }
+
     private fun showCapturedImagePreview(file: File) {
         if (!file.exists() || !file.canRead()) {
             Toast.makeText(this, "Captured preview file is unavailable.", Toast.LENGTH_SHORT).show()
@@ -4796,9 +4917,17 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             setPadding(24, 24, 24, 24)
         }
 
-        AlertDialog.Builder(this)
+        val builder = AlertDialog.Builder(this)
             .setTitle("Captured glasses JPEG")
             .setView(imageView)
+
+        if (isHeyCyanSelected()) {
+            builder.setNegativeButton("Save full res") { _, _ ->
+                saveFullResolutionGlassesImageToCameraRoll()
+            }
+        }
+
+        builder
             .setNeutralButton("Save to camera roll") { _, _ ->
                 saveCapturedGlassesPreviewToCameraRoll(file)
             }
@@ -8906,6 +9035,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             try {
                 coroutineContext.ensureActive()
                 if (!isDownloadSessionActive(sessionId)) return
+                val photoOnlyMode = syncAllRemainingPhotosMode
                 // Split by line, each line should be a file name
                 val lines = content.trim().lines()
                 val jpgFiles = mutableListOf<String>()
@@ -8958,6 +9088,34 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                     } else {
                         downloadLatestHighQualityImage(jpgFiles, deviceIp, sessionId)
                     }
+                    return
+                }
+
+                if (photoOnlyMode) {
+                    syncAllRemainingPhotosMode = false
+                    if (jpgFiles.isEmpty()) {
+                        withContext(Dispatchers.Main) {
+                            if (isDownloadSessionActive(sessionId)) {
+                                showDownloadSuccess("No remaining photos were found on the glasses.")
+                            }
+                        }
+                        return
+                    }
+                    withContext(Dispatchers.Main) {
+                        if (!isDownloadSessionActive(sessionId)) return@withContext
+                        setTransferPlan(jpgFiles.size, 0, 0)
+                        setTransferDetail("Preparing remaining photos (0/${jpgFiles.size})...")
+                    }
+                    withContext(Dispatchers.Main) {
+                        if (isDownloadSessionActive(sessionId)) {
+                            Toast.makeText(
+                                this@MainActivity,
+                                "Syncing remaining photos. Please do not close or exit the app during transfer.",
+                                Toast.LENGTH_LONG,
+                            ).show()
+                        }
+                    }
+                    downloadAllMediaFiles(jpgFiles, emptyList(), emptyList(), deviceIp, sessionId)
                     return
                 }
 
@@ -9028,11 +9186,10 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         val output = File(outputDir, "AI_Full_${System.currentTimeMillis()}_$safeName")
         val partial = File(output.parentFile, "${output.name}.part")
         val url = URL("http://$deviceIp/files/$latestFileName")
-        val downloadStartedAtMs = System.currentTimeMillis()
 
         withContext(Dispatchers.Main) {
             if (isDownloadSessionActive(sessionId)) {
-                setTransferDetail("Downloading latest full-resolution photo...")
+                setTransferDetail("Downloading latest full-resolution photo: ${File(latestFileName).name}")
             }
         }
         Log.i("ImageQuestion", "Requesting full-resolution HeyCyan photo: $url")
@@ -9065,6 +9222,31 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             return
         }
 
+        val saveToCameraRoll = manualFullResSaveCallback
+        if (saveToCameraRoll != null) {
+            val callback = saveToCameraRoll
+            manualFullResSaveCallback = null
+            highQualityImageRequest = null
+            finishDownloadInitialPhase("manual full-resolution image downloaded")
+            runOnUiThread {
+                setTransferDetail("Saving full-resolution photo to camera roll...")
+            }
+            teardownDownloadP2pSession(
+                sendExitTransfer = true,
+                hideTransferUi = true,
+                onTeardownComplete = {
+                    mediaDownloadPurpose = MediaDownloadPurpose.FULL_SYNC
+                    runOnUiThread {
+                        setTransferDetail("Saved full-resolution photo to camera roll.")
+                        setTransferUiVisible(false)
+                        resetTransferUiState()
+                        callback(output)
+                    }
+                },
+            )
+            return
+        }
+
         val transferDurationMs = System.currentTimeMillis() - request.captureStartedAtMs
         completeHighQualityImageTransfer(output, transferDurationMs)
     }
@@ -9093,6 +9275,25 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     }
 
     private fun finishHighQualityImageFailure(reason: String) {
+        if (manualFullResSaveCallback != null) {
+            manualFullResSaveCallback = null
+            highQualityImageRequest = null
+            cancelParallelAudioQuestion()
+            runOnUiThread {
+                setTransferDetail("Full-resolution save failed.")
+                Toast.makeText(this, reason, Toast.LENGTH_LONG).show()
+            }
+            finishDownloadInitialPhase("manual full-resolution image failed")
+            teardownDownloadP2pSession(
+                sendExitTransfer = true,
+                hideTransferUi = false,
+                onTeardownComplete = {
+                    mediaDownloadPurpose = MediaDownloadPurpose.FULL_SYNC
+                },
+            )
+            return
+        }
+
         val request = highQualityImageRequest ?: return
         cancelParallelAudioQuestion()
         runOnUiThread {
@@ -9347,7 +9548,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                     if (!isDownloadSessionActive(sessionId)) return
                     withContext(Dispatchers.Main) {
                         if (!isDownloadSessionActive(sessionId)) return@withContext
-                        setTransferDetail("Downloading photo ${index + 1}/${jpgFiles.size}...")
+                        setTransferDetail("Downloading photo ${index + 1}/${jpgFiles.size}: $fileName")
                     }
                     Log.i("DataDownload", "Downloading file ${index + 1}/${jpgFiles.size}: $fileName")
 
@@ -9390,7 +9591,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                     if (!isDownloadSessionActive(sessionId)) return
                     withContext(Dispatchers.Main) {
                         if (!isDownloadSessionActive(sessionId)) return@withContext
-                        setTransferDetail("Downloading video ${index + 1}/${mp4Files.size}...")
+                        setTransferDetail("Downloading video ${index + 1}/${mp4Files.size}: $fileName")
                     }
                     Log.i("DataDownload", "Downloading video ${index + 1}/${mp4Files.size}: $fileName")
 
@@ -9448,7 +9649,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                     if (!isDownloadSessionActive(sessionId)) return
                     withContext(Dispatchers.Main) {
                         if (!isDownloadSessionActive(sessionId)) return@withContext
-                        setTransferDetail("Downloading audio ${index + 1}/${opusFiles.size}...")
+                        setTransferDetail("Downloading audio ${index + 1}/${opusFiles.size}: $fileName")
                     }
                     Log.i("DataDownload", "Downloading audio ${index + 1}/${opusFiles.size}: $fileName")
 

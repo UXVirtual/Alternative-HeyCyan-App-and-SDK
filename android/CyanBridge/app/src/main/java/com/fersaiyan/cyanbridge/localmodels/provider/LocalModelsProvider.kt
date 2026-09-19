@@ -248,14 +248,31 @@ class LocalModelsProvider {
         onStatus?.invoke("Remote: $model @ ${baseUrl.substringBefore("/v1")}")
 
         return try {
-            RemoteOpenAiClient.chatCompletionStreaming(
-                context = context,
-                messages = messages,
-                maxTokens = maxTokens ?: 2048,
-                onToken = onToken,
-                imagePaths = imagePaths,
-                audioPath = audioPath,
-            )
+            if (imagePaths.isNotEmpty() || !audioPath.isNullOrBlank()) {
+                val imageQueryPrompt = messages.lastOrNull { it["role"]?.equals("user", ignoreCase = true) == true }
+                    ?.get("content")
+                    .orEmpty()
+                    .ifBlank { "Describe this image." }
+                val systemPrompt = messages.firstOrNull { it["role"]?.equals("system", ignoreCase = true) == true }
+                    ?.get("content")
+                    ?.takeIf { it.isNotBlank() }
+
+                RemoteOpenAiClient.imageQuery(
+                    context = context,
+                    imagePaths = imagePaths.ifEmpty { listOfNotNull(audioPath) },
+                    prompt = imageQueryPrompt,
+                    systemPrompt = systemPrompt,
+                )
+            } else {
+                RemoteOpenAiClient.chatCompletionStreaming(
+                    context = context,
+                    messages = messages,
+                    maxTokens = maxTokens ?: 2048,
+                    onToken = onToken,
+                    imagePaths = imagePaths,
+                    audioPath = audioPath,
+                )
+            }
         } catch (e: Exception) {
             onStatus?.invoke("Remote error: ${e.message}")
             throw e

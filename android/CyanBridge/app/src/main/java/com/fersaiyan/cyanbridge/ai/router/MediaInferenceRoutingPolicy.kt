@@ -3,6 +3,7 @@ package com.fersaiyan.cyanbridge.ai.router
 import android.content.Context
 import com.fersaiyan.cyanbridge.agent.LocalAgentPrefs
 import com.fersaiyan.cyanbridge.agent.ProSubscriptionPrefs
+import com.fersaiyan.cyanbridge.localmodels.remote.RemoteOpenAiPrefs
 import com.fersaiyan.cyanbridge.localmodels.settings.LocalModelRuntime
 import com.fersaiyan.cyanbridge.localmodels.settings.LocalModelSettingsRepository
 import com.fersaiyan.cyanbridge.localmodels.storage.LocalModelStorageRepository
@@ -10,6 +11,10 @@ import com.fersaiyan.cyanbridge.shared.settings.AgentProviderType
 
 object MediaInferenceRoutingPolicy {
     fun resolve(context: Context): AgentProviderType {
+        if (RemoteOpenAiPrefs.isActive(context)) {
+            return AgentProviderType.LOCAL_AGENT
+        }
+
         return resolve(
             preferred = LocalAgentPrefs.getProviderType(context),
             localMediaAvailable = hasLocalMultimodalModel(context),

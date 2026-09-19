@@ -70,6 +70,11 @@ class GlassesDashboardScreenTest {
         composeRule.runOnIdle {
             assertEquals(GlassesDashboardAction.PreviewLastGlassesImage, action)
         }
+
+        composeRule.onNodeWithText("Save full res").performClick()
+        composeRule.runOnIdle {
+            assertEquals(GlassesDashboardAction.SaveFullResGlassesImage, action)
+        }
     }
 
     @Test
@@ -150,6 +155,7 @@ class GlassesDashboardScreenTest {
         composeRule.onNodeWithText("Test image AI description").assertIsDisplayed()
         composeRule.onNodeWithText("Capture + Preview").assertIsDisplayed()
         composeRule.onNodeWithText("Preview last JPEG").assertIsDisplayed()
+        composeRule.onNodeWithText("Save full res").assertIsDisplayed()
         composeRule.onNodeWithText("Show advanced controls").assertIsDisplayed()
         composeRule.onAllNodesWithText("Meeting capture").assertCountEquals(0)
     }

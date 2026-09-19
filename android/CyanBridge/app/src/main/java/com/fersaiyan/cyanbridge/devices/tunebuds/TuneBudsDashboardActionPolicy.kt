@@ -16,6 +16,7 @@ internal fun GlassesDashboardAction.isSupportedForTuneBudsDashboard(): Boolean =
     GlassesDashboardAction.TestImageQuestion,
     GlassesDashboardAction.CaptureAndPreviewGlassesImage,
     GlassesDashboardAction.PreviewLastGlassesImage,
+    GlassesDashboardAction.SaveFullResGlassesImage,
     GlassesDashboardAction.OpenExternalImageAutomationDiagnostics,
     GlassesDashboardAction.CapturePhoto,
     GlassesDashboardAction.ToggleVideo,
