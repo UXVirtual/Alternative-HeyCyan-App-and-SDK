@@ -53,6 +53,10 @@ data class LocalModelGenerationUiState(
 
     // Assistant behavior.
     val systemPrompt: String = "",
+    val ttsVoiceOptions: List<String> = emptyList(),
+    val ttsVoiceIndex: Int = 0,
+    val ttsResponseFormatOptions: List<String> = emptyList(),
+    val ttsResponseFormatIndex: Int = 0,
 
     // Advanced controls.
     val runtimeOptions: List<String> = emptyList(),
@@ -121,6 +125,8 @@ enum class LocalModelOptionField {
     MTP_MODE,
     TEMPLATE,
     REMOTE_API_MODE,
+    TTS_VOICE,
+    TTS_RESPONSE_FORMAT,
 }
 
 enum class LocalModelToggleField {

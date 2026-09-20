@@ -174,6 +174,7 @@ fun LocalModelsConfigureScreen(
 
             item {
                 ScreenCard("Assistant behavior") {
+                    val generation = state.generation
                     Text(
                         "This prompt is sent to the selected local model. Keep the short-first instruction for faster spoken responses, or customize it for your use case.",
                         style = MaterialTheme.typography.bodySmall,
@@ -181,10 +182,27 @@ fun LocalModelsConfigureScreen(
                     )
                     ModelTextField(
                         label = "System prompt",
-                        value = state.generation.systemPrompt,
+                        value = generation.systemPrompt,
                         minLines = 4,
                         onValueChange = {
                             onAction(LocalModelsAction.UpdateText(LocalModelTextField.SYSTEM_PROMPT, it))
+                        },
+                    )
+                    ChoiceField(
+                        label = "TTS voice",
+                        value = generation.ttsVoiceOptions.getOrNull(generation.ttsVoiceIndex).orEmpty(),
+                        options = generation.ttsVoiceOptions,
+                        onSelected = {
+                            onAction(LocalModelsAction.SelectOption(LocalModelOptionField.TTS_VOICE, it))
+                        },
+                    )
+                    SupportingText("marin and cedar voices provide the best quality.")
+                    ChoiceField(
+                        label = "TTS response format",
+                        value = generation.ttsResponseFormatOptions.getOrNull(generation.ttsResponseFormatIndex).orEmpty(),
+                        options = generation.ttsResponseFormatOptions,
+                        onSelected = {
+                            onAction(LocalModelsAction.SelectOption(LocalModelOptionField.TTS_RESPONSE_FORMAT, it))
                         },
                     )
                     FilledTonalButton(

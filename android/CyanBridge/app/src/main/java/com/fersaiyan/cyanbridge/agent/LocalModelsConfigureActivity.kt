@@ -53,6 +53,7 @@ import com.fersaiyan.cyanbridge.shared.localmodels.RemoteOpenAiApiMode
 import com.fersaiyan.cyanbridge.shared.localmodels.StudioBridgeUiState
 import com.fersaiyan.cyanbridge.shared.localmodels.remoteOpenAiApiModeOptions
 import com.fersaiyan.cyanbridge.shared.ui.localmodels.LocalModelsConfigureScreen
+import com.fersaiyan.cyanbridge.tts.TtsProviderPreferences
 import com.fersaiyan.cyanbridge.ui.MyApplication
 import com.fersaiyan.cyanbridge.ui.appearance.AppearancePreferences
 import com.fersaiyan.cyanbridge.ui.appearance.rememberAppearanceSettings
@@ -237,6 +238,10 @@ class LocalModelsConfigureActivity : AppCompatActivity() {
                 mtpSupported = mtpSupport,
                 mtpStatus = mtpStatus,
                 systemPrompt = generationDraft.systemPrompt,
+                ttsVoiceOptions = TtsProviderPreferences.OPENAI_TTS_VOICE_OPTIONS,
+                ttsVoiceIndex = TtsProviderPreferences.OPENAI_TTS_VOICE_OPTIONS.indexOf(generationDraft.ttsVoice).coerceAtLeast(0),
+                ttsResponseFormatOptions = TtsProviderPreferences.OPENAI_TTS_RESPONSE_FORMAT_OPTIONS,
+                ttsResponseFormatIndex = TtsProviderPreferences.OPENAI_TTS_RESPONSE_FORMAT_OPTIONS.indexOf(generationDraft.ttsResponseFormat).coerceAtLeast(0),
                 runtimeOptions = LocalModelRuntime.entries.map { it.label },
                 runtimeIndex = generationDraft.runtime.ordinal,
                 runtimeNote = runtimeNote(generationDraft.runtime),
@@ -276,6 +281,10 @@ class LocalModelsConfigureActivity : AppCompatActivity() {
         if (model == null) {
             val defaults = LocalGenerationSettings.defaultsFor(null)
             generationDraft = GenerationDraft.from(defaults, LocalMtpMode.AUTO, LocalModelsPrefs.getHuggingFaceToken(this))
+                .copy(
+                    ttsVoice = TtsProviderPreferences.getOpenAiVoice(this),
+                    ttsResponseFormat = TtsProviderPreferences.getOpenAiResponseFormat(this),
+                )
             return
         }
         val settings = LocalModelSettingsRepository.getForModel(this, model.id)
@@ -286,7 +295,11 @@ class LocalModelsConfigureActivity : AppCompatActivity() {
             settings = settings,
             mtpMode = LocalMtpSettingsRepository.getMode(this, model.id),
             huggingFaceToken = LocalModelsPrefs.getHuggingFaceToken(this),
-        ).copy(templateIndex = templateIndex)
+        ).copy(
+            templateIndex = templateIndex,
+            ttsVoice = TtsProviderPreferences.getOpenAiVoice(this),
+            ttsResponseFormat = TtsProviderPreferences.getOpenAiResponseFormat(this),
+        )
     }
 
     private fun loadRemoteDraft() {
@@ -378,6 +391,16 @@ class LocalModelsConfigureActivity : AppCompatActivity() {
                     apiMode = RemoteOpenAiApiMode.entries.getOrElse(index) { RemoteOpenAiApiMode.CHAT_COMPLETIONS },
                 )
             }
+            LocalModelOptionField.TTS_VOICE -> {
+                generationDraft = generationDraft.copy(
+                    ttsVoice = TtsProviderPreferences.OPENAI_TTS_VOICE_OPTIONS.getOrElse(index) { TtsProviderPreferences.DEFAULT_OPENAI_TTS_VOICE },
+                )
+            }
+            LocalModelOptionField.TTS_RESPONSE_FORMAT -> {
+                generationDraft = generationDraft.copy(
+                    ttsResponseFormat = TtsProviderPreferences.OPENAI_TTS_RESPONSE_FORMAT_OPTIONS.getOrElse(index) { TtsProviderPreferences.DEFAULT_OPENAI_TTS_RESPONSE_FORMAT },
+                )
+            }
         }
         hasUnsavedChanges = true
         refreshComposeState()
@@ -396,8 +419,10 @@ class LocalModelsConfigureActivity : AppCompatActivity() {
     private fun saveGenerationSettings(showToast: Boolean): Boolean {
         val model = selectedModel()
         LocalModelsPrefs.setHuggingFaceToken(this, generationDraft.huggingFaceToken)
+        TtsProviderPreferences.setOpenAiVoice(this, generationDraft.ttsVoice)
+        TtsProviderPreferences.setOpenAiResponseFormat(this, generationDraft.ttsResponseFormat)
         if (model == null) {
-            if (showToast) Toast.makeText(this, "Saved download token. Install a model to save model settings.", Toast.LENGTH_SHORT).show()
+            if (showToast) Toast.makeText(this, "Saved download token and TTS settings. Install a model to save model settings.", Toast.LENGTH_SHORT).show()
             hasUnsavedChanges = false
             refreshComposeState()
             return false
@@ -858,6 +883,8 @@ class LocalModelsConfigureActivity : AppCompatActivity() {
         val templateIndex: Int = 0,
         val structuredJson: Boolean = false,
         val systemPrompt: String = LocalGenerationSettings.DEFAULT_SYSTEM_PROMPT,
+        val ttsVoice: String = TtsProviderPreferences.DEFAULT_OPENAI_TTS_VOICE,
+        val ttsResponseFormat: String = TtsProviderPreferences.DEFAULT_OPENAI_TTS_RESPONSE_FORMAT,
         val huggingFaceToken: String = "",
     ) {
         companion object {

@@ -333,9 +333,9 @@ class SettingsActivity : AppCompatActivity(), SettingsScreenActions {
                         context = this@SettingsActivity,
                         input = sampleText,
                         model = "gpt-4o-mini-tts",
-                        voice = "alloy",
+                        voice = TtsProviderPreferences.getOpenAiVoice(this@SettingsActivity),
                         instructions = RemoteOpenAiClient.DEFAULT_SPEECH_INSTRUCTIONS,
-                        responseFormat = "mp3",
+                        responseFormat = TtsProviderPreferences.getOpenAiResponseFormat(this@SettingsActivity),
                     )
                 }
                 val player = MediaPlayer()

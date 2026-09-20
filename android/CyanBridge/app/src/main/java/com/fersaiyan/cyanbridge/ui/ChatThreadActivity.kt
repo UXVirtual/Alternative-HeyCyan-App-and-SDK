@@ -89,6 +89,8 @@ import com.fersaiyan.cyanbridge.ui.debug.DebugLogSupport
 import com.fersaiyan.cyanbridge.ui.theme.CyanBridgeTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -1057,21 +1059,28 @@ class ChatThreadActivity : AppCompatActivity() {
             assistantSpeechPlaybackJob = lifecycleScope.launch {
                 AudioSessionCoordinator.markBusy()
                 try {
-                    while (true) {
-                        val nextEntry = synchronized(assistantSpeechQueueLock) {
-                            assistantSpeechQueue.pollFirst()
-                        } ?: break
-                        val file = withContext(Dispatchers.IO) {
-                            RemoteOpenAiClient.generateSpeechToFile(
-                                context = this@ChatThreadActivity,
-                                input = nextEntry,
-                                model = "gpt-4o-mini-tts",
-                                voice = "alloy",
-                                instructions = RemoteOpenAiClient.DEFAULT_SPEECH_INSTRUCTIONS,
-                                responseFormat = "mp3",
-                            )
-                        }
+                    val queuedEntries = synchronized(assistantSpeechQueueLock) {
+                        val entries = assistantSpeechQueue.toList()
+                        assistantSpeechQueue.clear()
+                        entries
+                    }
 
+                    val generatedFiles = withContext(Dispatchers.IO) {
+                        queuedEntries.map { entry ->
+                            async(Dispatchers.IO) {
+                                RemoteOpenAiClient.generateSpeechToFile(
+                                    context = this@ChatThreadActivity,
+                                    input = entry,
+                                    model = "gpt-4o-mini-tts",
+                                    voice = TtsProviderPreferences.getOpenAiVoice(this@ChatThreadActivity),
+                                    instructions = RemoteOpenAiClient.DEFAULT_SPEECH_INSTRUCTIONS,
+                                    responseFormat = TtsProviderPreferences.getOpenAiResponseFormat(this@ChatThreadActivity),
+                                )
+                            }
+                        }.awaitAll()
+                    }
+
+                    for ((index, file) in generatedFiles.withIndex()) {
                         val playbackDone = kotlinx.coroutines.CompletableDeferred<Unit>()
                         val player = MediaPlayer()
                         activeAssistantSpeechPlayer = player
@@ -1084,7 +1093,7 @@ class ChatThreadActivity : AppCompatActivity() {
                         )
                         player.setDataSource(file.absolutePath)
                         player.setOnPreparedListener {
-                            Log.i("ChatThreadActivity", "Assistant chat reply TTS prepared file=${file.absolutePath} chunk=${nextEntry.length}")
+                            Log.i("ChatThreadActivity", "Assistant chat reply TTS prepared file=${file.absolutePath} chunkIndex=$index")
                             player.start()
                         }
                         player.setOnCompletionListener {

@@ -372,9 +372,9 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                             context = this@MainActivity,
                             input = speechText,
                             model = "gpt-4o-mini-tts",
-                            voice = "alloy",
+                            voice = TtsProviderPreferences.getOpenAiVoice(this@MainActivity),
                             instructions = RemoteOpenAiClient.DEFAULT_SPEECH_INSTRUCTIONS,
-                            responseFormat = "mp3",
+                            responseFormat = TtsProviderPreferences.getOpenAiResponseFormat(this@MainActivity),
                             forceRefresh = !TtsProviderPreferences.getUseCache(this@MainActivity),
                         )
                     }

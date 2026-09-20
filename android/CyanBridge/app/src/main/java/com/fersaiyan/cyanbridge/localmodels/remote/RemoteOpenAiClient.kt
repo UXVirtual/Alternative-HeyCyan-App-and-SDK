@@ -121,9 +121,9 @@ object RemoteOpenAiClient {
         context: Context,
         input: String,
         model: String = "gpt-4o-mini-tts",
-        voice: String = "alloy",
+        voice: String = TtsProviderPreferences.DEFAULT_OPENAI_TTS_VOICE,
         instructions: String = DEFAULT_SPEECH_INSTRUCTIONS,
-        responseFormat: String = "mp3",
+        responseFormat: String = TtsProviderPreferences.DEFAULT_OPENAI_TTS_RESPONSE_FORMAT,
         forceRefresh: Boolean = false,
     ): File {
         require(input.isNotBlank()) { "Speech input is blank" }
@@ -178,9 +178,9 @@ object RemoteOpenAiClient {
         context: Context,
         input: String,
         model: String,
-        voice: String = "alloy",
+        voice: String = TtsProviderPreferences.DEFAULT_OPENAI_TTS_VOICE,
         instructions: String = DEFAULT_SPEECH_INSTRUCTIONS,
-        responseFormat: String = "mp3",
+        responseFormat: String = TtsProviderPreferences.DEFAULT_OPENAI_TTS_RESPONSE_FORMAT,
     ): File {
         val cacheDir = File(context.cacheDir, "openai_tts_cache").apply { mkdirs() }
         val cacheKey = buildTtsCacheKey(
@@ -212,9 +212,9 @@ object RemoteOpenAiClient {
     internal fun buildTtsCacheKey(
         input: String,
         model: String,
-        voice: String = "alloy",
+        voice: String = TtsProviderPreferences.DEFAULT_OPENAI_TTS_VOICE,
         instructions: String = DEFAULT_SPEECH_INSTRUCTIONS,
-        responseFormat: String = "mp3",
+        responseFormat: String = TtsProviderPreferences.DEFAULT_OPENAI_TTS_RESPONSE_FORMAT,
     ): String {
         val canonicalPayload = listOf(
             "input=${normalizeCacheText(input)}",
@@ -249,9 +249,9 @@ object RemoteOpenAiClient {
     internal fun buildSpeechPayload(
         model: String,
         input: String,
-        voice: String = "alloy",
+        voice: String = TtsProviderPreferences.DEFAULT_OPENAI_TTS_VOICE,
         instructions: String = DEFAULT_SPEECH_INSTRUCTIONS,
-        responseFormat: String = "mp3",
+        responseFormat: String = TtsProviderPreferences.DEFAULT_OPENAI_TTS_RESPONSE_FORMAT,
     ): JSONObject = JSONObject()
         .put("model", model.trim())
         .put("input", input)

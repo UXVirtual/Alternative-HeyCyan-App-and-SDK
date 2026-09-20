@@ -153,6 +153,18 @@ class RemoteOpenAiClientTest {
     }
 
     @Test
+    fun openai_speech_defaults_use_marin_voice_and_mp3_format() {
+        val payload = RemoteOpenAiClient.buildSpeechPayload(
+            model = "gpt-4o-mini-tts",
+            input = "Need a concise answer.",
+            instructions = "Speak politely and stay concise.",
+        )
+
+        assertEquals("marin", payload.getString("voice"))
+        assertEquals("mp3", payload.getString("response_format"))
+    }
+
+    @Test
     fun tts_cache_key_is_stable_and_changes_with_voice_or_instructions() {
         val first = RemoteOpenAiClient.buildTtsCacheKey(
             input = "I am listening.",
