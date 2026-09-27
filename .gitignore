@@ -74,6 +74,13 @@ Thumbs.db
 
 # Local tooling (very large / machine-specific)
 tools/
+!tools/
+tools/*
+!tools/hil/
+tools/hil/*
+!tools/hil/run_heycyan_image_contract.sh
+!tools/hil/review_heycyan_image_contract.py
+!tools/hil/test_review_heycyan_image_contract.py
 
 # Generated analysis and language caches
 **/.kotlin/

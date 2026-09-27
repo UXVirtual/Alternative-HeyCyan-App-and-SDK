@@ -76,6 +76,9 @@ object AutoPairManager {
         // Periodic reconnect loop (only while process stays alive).
         scope.launch {
             var backoffMs = 5_000L
+            // requestConnect(startup) already launched an attempt above. Do not race it
+            // with a second connectDirectly from the first periodic-loop iteration.
+            delay(MIN_RECONNECT_INTERVAL_MS)
             while (isActive) {
                 if (suppressAutoReconnect) {
                     // User explicitly disconnected; keep the list stable until manual reconnect.
@@ -113,6 +116,10 @@ object AutoPairManager {
                     continue
                 }
 
+                if (!shouldAttemptReconnect("loop")) {
+                    delay(5_000L)
+                    continue
+                }
                 val attempted = tryConnectOnce(appContext, reason = "loop")
                 if (!attempted) {
                     // Nothing to connect to (no saved MAC / no permissions)
