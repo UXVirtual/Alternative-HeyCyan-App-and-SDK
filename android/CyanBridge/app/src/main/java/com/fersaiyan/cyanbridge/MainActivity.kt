@@ -669,6 +669,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private var transferModeCommandCallbackLatencyMs: Long? = null
     private var transferModeCommandCallbackReceived = false
     private var transferModeCommandEvidenceReceived = false
+    private var transferModeEntered = false
     private var transferModeCommandTimeoutJob: Job? = null
     private var selectedDownloadNetworkSummary = "none"
     private var officialFlowRetryRequired = false
@@ -1749,14 +1750,15 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         try {
             LargeDataHandler.getInstance().glassesControl(byteArrayOf(0x02, 0x04)) { _, response ->
                 try {
-                    deliver(
-                        if (response.dataType == 4) {
+                        val counts = if (response.dataType == 4) {
                             HeyCyanMediaCounts(response.imageCount, response.videoCount, response.recordCount)
                         } else {
                             Log.w("MediaCount", "Ignoring sync count response with dataType=${response.dataType}")
                             null
-                        },
-                    )
+                        }
+                    // The callback may run on the main thread, where deliver() starts MEDIA_SYNC immediately.
+                    GlassesSessionCoordinator.releaseBackgroundCommand(permit)
+                    deliver(counts)
                 } finally {
                     GlassesSessionCoordinator.releaseBackgroundCommand(permit)
                 }
@@ -5043,7 +5045,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                     withContext(Dispatchers.Main) {
                         Toast.makeText(
                             this@MainActivity,
-                            "Photo was saved, but its preview could not be transferred.",
+                                "Photo was saved. The glasses did not provide a BLE preview; use Sync images to retrieve it.",
                             Toast.LENGTH_LONG,
                         ).show()
                     }
@@ -5835,7 +5837,20 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     }
 
     private fun isDecodableImageFile(file: File): Boolean {
-        return readImageQuestionMetrics(file) != null
+            if (!file.exists() || file.length() <= 0L) return false
+            return runCatching {
+                BitmapFactory.decodeFile(file.absolutePath)?.let { bitmap ->
+                    Log.i(
+                        "ImageQuestionTransfer",
+                        "Decoded thumbnail file=${file.name} bytes=${file.length()} " +
+                            "dimensions=${bitmap.width}x${bitmap.height}",
+                    )
+                    bitmap.recycle()
+                    true
+                } ?: false
+            }.onFailure { error ->
+                Log.w("ImageQuestionTransfer", "Could not decode thumbnail file=${file.name}", error)
+            }.getOrDefault(false)
     }
 
     private suspend fun waitForTtsToFinish(timeoutMs: Long) {
@@ -8935,6 +8950,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         transferModeCommandSentAtMs = System.currentTimeMillis()
         transferModeCommandCallbackReceived = false
         transferModeCommandEvidenceReceived = false
+        transferModeEntered = false
         recordHeyCyanSyncDiagnostic(
             "transfer_mode_sent",
             mapOf("attempt" to attempt.toString(), "session_id" to sessionId.toString()),
@@ -9018,8 +9034,10 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             } else if (resp.errorCode == -1) {
                 quarantineHeyCyanMediaSync(
                     "The glasses rejected transfer mode after $maxAttempts attempts.",
-                    sendExitTransfer = true,
+                    sendExitTransfer = false,
                 )
+                } else if (resp.errorCode == 0) {
+                transferModeEntered = true
             }
         }
     }
@@ -11168,6 +11186,10 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private fun sendExitTransferModeIfRequested() {
         if (!downloadExitTransferRequested) return
         downloadExitTransferRequested = false
+        if (!transferModeEntered) {
+            Log.i("DataDownload", "Skipping transfer-mode exit because entry was never confirmed")
+            return
+        }
         downloadExitTransferResponsePending = true
         downloadExitTransferTimedOut = false
         setHeyCyanMediaSyncStage(
@@ -11836,6 +11858,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private fun markTransferModeEvidence(source: String) {
         if (transferModeCommandEvidenceReceived) return
         transferModeCommandEvidenceReceived = true
+        transferModeEntered = true
         transferModeCommandTimeoutJob?.cancel()
         transferModeCommandTimeoutJob = null
         Log.i("DataDownload", "Transfer mode independently confirmed by $source")
