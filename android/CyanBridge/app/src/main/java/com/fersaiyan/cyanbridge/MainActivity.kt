@@ -27,6 +27,17 @@ import com.fersaiyan.cyanbridge.media.GlassesMediaPrefs
 import com.fersaiyan.cyanbridge.media.SyncedMediaFolder
 import com.fersaiyan.cyanbridge.media.VendorAlbumDownloader
 import com.fersaiyan.cyanbridge.media.HeyCyanP2pPolicy
+import com.fersaiyan.cyanbridge.media.HeyCyanMediaManifest
+import com.fersaiyan.cyanbridge.media.HeyCyanMediaManifestItem
+import com.fersaiyan.cyanbridge.media.HeyCyanMediaType
+import com.fersaiyan.cyanbridge.media.HeyCyanTransferLedger
+import com.fersaiyan.cyanbridge.media.HeyCyanTransferLedgerStore
+import com.fersaiyan.cyanbridge.media.HeyCyanSyncPolicy
+import com.fersaiyan.cyanbridge.media.HeyCyanSyncTerminalResult
+import com.fersaiyan.cyanbridge.media.HeyCyanSyncCountEvidence
+import com.fersaiyan.cyanbridge.media.HeyCyanSyncCountEvidenceStore
+import com.fersaiyan.cyanbridge.media.HeyCyanSyncDiagnosticsStore
+import com.fersaiyan.cyanbridge.media.HeyCyanSyncMediaCounts
 import com.fersaiyan.cyanbridge.ota.FirmwareClient
 import com.fersaiyan.cyanbridge.ota.InstalledFirmwareVersions
 import com.fersaiyan.cyanbridge.ota.FirmwareResult
@@ -48,6 +59,7 @@ import com.fersaiyan.cyanbridge.media.autocapture.AutoAudioCaptureService
 import com.fersaiyan.cyanbridge.media.autocapture.GlassesSyncedAudioIngestor
 import android.os.Build
 import android.os.Bundle
+import android.os.SystemClock
 import android.util.Log
 import android.widget.Toast
 import android.view.View
@@ -115,6 +127,7 @@ import com.fersaiyan.cyanbridge.devices.vive.ViveEagleManager
 import com.fersaiyan.cyanbridge.shared.devices.GlassesManagerGating
 import com.fersaiyan.cyanbridge.privacy.PrivacyPrefs
 import com.fersaiyan.cyanbridge.ui.MyApplication
+import com.fersaiyan.cyanbridge.ui.HeyCyanBleSetupTrace
 import com.fersaiyan.cyanbridge.ui.bleIpBridge
 import com.fersaiyan.cyanbridge.ui.hasBluetooth
 import com.fersaiyan.cyanbridge.ui.hasNotificationPermission
@@ -155,6 +168,7 @@ import kotlinx.coroutines.isActive
 import java.io.File
 import java.io.FileOutputStream
 import java.io.InputStream
+import java.io.FilterInputStream
 import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.net.HttpURLConnection
@@ -239,6 +253,15 @@ import com.fersaiyan.cyanbridge.shared.glasses.GlassesDashboardUiState
 import com.fersaiyan.cyanbridge.shared.glasses.FirmwarePatchRequestUiState
 import com.fersaiyan.cyanbridge.shared.glasses.GlassesSyncFlow
 import com.fersaiyan.cyanbridge.shared.glasses.GlassesTransferUiState
+import com.fersaiyan.cyanbridge.shared.glasses.HeyCyanCaptureAvailability
+import com.fersaiyan.cyanbridge.shared.glasses.HeyCyanCapturePolicy
+import com.fersaiyan.cyanbridge.shared.glasses.HeyCyanCaptureResult
+import com.fersaiyan.cyanbridge.shared.glasses.HeyCyanMediaCapacityPolicy
+import com.fersaiyan.cyanbridge.shared.glasses.HeyCyanMediaCapacityUiState
+import com.fersaiyan.cyanbridge.shared.glasses.HeyCyanMediaInventoryUiState
+import com.fersaiyan.cyanbridge.shared.glasses.HeyCyanMediaSyncStage
+import com.fersaiyan.cyanbridge.shared.glasses.HeyCyanMediaSyncSummaryUiState
+import com.fersaiyan.cyanbridge.shared.glasses.HeyCyanMediaTypeCounts
 import com.fersaiyan.cyanbridge.shared.glasses.MetaRaybanUiState
 import com.fersaiyan.cyanbridge.shared.glasses.MeizuMyvuUiState
 import com.fersaiyan.cyanbridge.shared.glasses.OtaFirmwareSource
@@ -501,10 +524,15 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         private const val P2P_GROUP_REMOVE_ACTION_TIMEOUT_MS = 5_000L
         private const val P2P_GROUP_DISCONNECT_TIMEOUT_MS = 5_000L
         private const val P2P_GROUP_REMOVAL_MAX_ATTEMPTS = 3
+        private const val P2P_PREFLIGHT_QUERY_TIMEOUT_MS = 3_000L
+        private const val HEY_CYAN_BLE_QUIET_MS = 4_000L
         private const val PULL_OTA_TEST_LEASE_MS = 10_000L
         private const val ONE_SHOT_BLE_COMMAND_TIMEOUT_MS = 6_000L
         private const val TRANSFER_MODE_COMMAND_TIMEOUT_MS = 10_000L
         private const val IMAGE_THUMBNAIL_TRANSFER_TIMEOUT_MS = 20_000L
+        private const val HEY_CYAN_CAPTURE_ACK_TIMEOUT_MS = 6_000L
+        private const val HEY_CYAN_CAPTURE_NOTIFY_TIMEOUT_MS = 4_000L
+        private const val HEY_CYAN_CAPTURE_COUNT_TIMEOUT_MS = 6_000L
         private const val VOICE_CUE_ROUTE_SETTLE_MS = 500L
         private const val VOICE_BLUETOOTH_ROUTE_TIMEOUT_MS = 3_000L
         private const val VOICE_CUE_BLUETOOTH_TAIL_MS = 50L
@@ -592,6 +620,17 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private val glassesTeardownScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var downloadSessionId: Long = 0L
     private var vendorAlbumDownloader: VendorAlbumDownloader? = null
+    private var heyCyanTransferLedger: HeyCyanTransferLedger? = null
+    private var heyCyanTransferLedgerStore: HeyCyanTransferLedgerStore? = null
+    private var heyCyanSyncTerminalResult: HeyCyanSyncTerminalResult? = null
+    private var pendingHeyCyanRetryItems: Set<HeyCyanMediaManifestItem> = emptySet()
+    private var pendingHeyCyanSyncBeforeCounts: HeyCyanMediaCounts? = null
+    private var heyCyanSyncBeforeCounts: HeyCyanMediaCounts? = null
+    private var heyCyanSyncCountEvidenceStore: HeyCyanSyncCountEvidenceStore? = null
+    private var heyCyanSyncDiagnosticsStore: HeyCyanSyncDiagnosticsStore? = null
+    private var heyCyanSyncDiagnosticsAttemptId = 0L
+    private var downloadAggregateDeadlineJob: Job? = null
+    private val activeDownloadHttpConnection = AtomicReference<HttpURLConnection?>(null)
     private var downloadResolvedHttpIp: String? = null
     private var downloadP2pNetwork: Network? = null
     private var boundNetwork: Network? = null
@@ -600,7 +639,15 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private var downloadWifiP2pCallback: WifiP2pManagerSingleton.WifiP2pCallback? = null
     private var downloadP2pTeardownInProgress = false
     private var downloadExitTransferRequested = false
+    private var downloadExitTransferResponsePending = false
+    private var downloadExitTransferTimedOut = false
+    private var downloadExitTransferTimeoutJob: Job? = null
+    private var pendingDownloadTeardownFinish: ((Boolean) -> Unit)? = null
     private var downloadCancelledByUser = false
+    private var mediaSyncQuarantined = false
+    private var mediaSyncQuarantineReason: String? = null
+    private var downloadPreflightAttemptId = 0L
+    private var downloadPreflightJob: Job? = null
     private var lastDownloadBleIpAtMs: Long = 0L
     private var downloadInitialPhaseTimeoutJob: Job? = null
     private var downloadInitialPhaseCompleted = false
@@ -637,6 +684,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private val activeVoiceAudioRoute = AtomicReference<VoiceAudioRouteOwner?>(null)
     private val imageThumbnailRequestInProgress = java.util.concurrent.atomic.AtomicBoolean(false)
     private val imageCaptureAwaitingNotification = java.util.concurrent.atomic.AtomicBoolean(false)
+    private val pendingHeyCyanPreviewPhotoReady = AtomicReference<CompletableDeferred<Unit>?>(null)
     private val metaPhotoCaptureInProgress = java.util.concurrent.atomic.AtomicBoolean(false)
     private val pendingImageCapturePermit = AtomicReference<BackgroundGlassesCommandPermit?>(null)
     @Volatile
@@ -1637,6 +1685,142 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         }
     }
 
+    private data class HeyCyanMediaCounts(
+        val photos: Int,
+        val videos: Int,
+        val audio: Int,
+    ) {
+        val total: Int
+            get() = photos + videos + audio
+    }
+
+    /** Reads the vendor `02 04` count response while exclusively owning its shared callback slot. */
+    private fun requestHeyCyanMediaCounts() {
+        Toast.makeText(this, "Requesting media count…", Toast.LENGTH_SHORT).show()
+        val permit = acquireBackgroundGlassesCommand("media-count command") ?: return
+        try {
+            LargeDataHandler.getInstance().glassesControl(byteArrayOf(0x02, 0x04)) { _, response ->
+                try {
+                    if (response.dataType != 4) {
+                        Log.w("MediaCount", "Ignoring media-count response with dataType=${response.dataType}")
+                        return@glassesControl
+                    }
+
+                    val counts = HeyCyanMediaCounts(
+                        photos = response.imageCount,
+                        videos = response.videoCount,
+                        audio = response.recordCount,
+                    )
+                    handleHeyCyanMediaCounts(counts)
+                } finally {
+                    GlassesSessionCoordinator.releaseBackgroundCommand(permit)
+                }
+            }
+            warnIfBackgroundGlassesCommandTimesOut(permit)
+        } catch (exception: Exception) {
+            GlassesSessionCoordinator.releaseBackgroundCommand(permit)
+            Log.e("MediaCount", "Failed to request media count", exception)
+        }
+    }
+
+    private fun handleHeyCyanMediaCounts(counts: HeyCyanMediaCounts) {
+        val message = if (counts.total > 0) {
+            "Media not uploaded - Photos: ${counts.photos}, Videos: ${counts.videos}, Records: ${counts.audio}"
+        } else {
+            "No pending media on glasses"
+        }
+        Log.i("MediaCount", message)
+        updateHeyCyanMediaInventory(counts)
+        Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+    }
+
+    private fun requestHeyCyanMediaCountsForSync(onResult: (HeyCyanMediaCounts?) -> Unit) {
+        val permit = acquireBackgroundGlassesCommand("sync media-count command")
+        if (permit == null) {
+            onResult(null)
+            return
+        }
+        val delivered = AtomicBoolean(false)
+        fun deliver(counts: HeyCyanMediaCounts?) {
+            if (delivered.compareAndSet(false, true)) {
+                runOnUiThread { onResult(counts) }
+            }
+        }
+        try {
+            LargeDataHandler.getInstance().glassesControl(byteArrayOf(0x02, 0x04)) { _, response ->
+                try {
+                    deliver(
+                        if (response.dataType == 4) {
+                            HeyCyanMediaCounts(response.imageCount, response.videoCount, response.recordCount)
+                        } else {
+                            Log.w("MediaCount", "Ignoring sync count response with dataType=${response.dataType}")
+                            null
+                        },
+                    )
+                } finally {
+                    GlassesSessionCoordinator.releaseBackgroundCommand(permit)
+                }
+            }
+            glassesTeardownScope.launch {
+                delay(HEY_CYAN_CAPTURE_COUNT_TIMEOUT_MS)
+                if (GlassesSessionCoordinator.isBackgroundCommandActive(permit)) {
+                    Log.w("MediaCount", "Sync media count timed out; retaining the command slot until response or reconnect")
+                    deliver(null)
+                }
+            }
+        } catch (exception: Exception) {
+            GlassesSessionCoordinator.releaseBackgroundCommand(permit)
+            Log.e("MediaCount", "Failed to request sync media count", exception)
+            deliver(null)
+        }
+    }
+
+    private fun updateHeyCyanMediaInventory(counts: HeyCyanMediaCounts) {
+        updateDashboardState { state ->
+            val capacityPolicyScope = runCatching {
+                DeviceManager.getInstance().deviceAddress?.trim()?.uppercase(Locale.US)
+            }.getOrNull()
+            val inventory = HeyCyanMediaInventoryUiState(
+                photos = counts.photos,
+                videos = counts.videos,
+                audio = counts.audio,
+            )
+            val wasInvalidatedForCurrentGlasses =
+                capacityPolicyScope != null &&
+                    capacityPolicyScope == state.heyCyanMedia.capacityPolicyScope &&
+                    state.heyCyanMedia.capacityPolicyInvalidated
+            val capacityPolicyInvalidated = wasInvalidatedForCurrentGlasses ||
+                HeyCyanMediaCapacityPolicy.shouldInvalidate(
+                    hardwareVersion = MyApplication.getInstance().hardwareVersion,
+                    firmwareVersion = MyApplication.getInstance().firmwareVersion,
+                    inventory = inventory,
+                )
+            val capacity = HeyCyanMediaCapacityPolicy.evaluate(
+                hardwareVersion = MyApplication.getInstance().hardwareVersion,
+                firmwareVersion = MyApplication.getInstance().firmwareVersion,
+                inventory = inventory,
+                capacityPolicyInvalidated = capacityPolicyInvalidated,
+            )
+            val captureAvailability = when (capacity) {
+                is HeyCyanMediaCapacityUiState.Known -> if (capacity.remainingMediaSlots > 0) {
+                    HeyCyanCaptureAvailability.AVAILABLE
+                } else {
+                    HeyCyanCaptureAvailability.BLOCKED_STORAGE_FULL
+                }
+                HeyCyanMediaCapacityUiState.Unknown -> state.heyCyanMedia.capture.availability
+            }
+            state.copy(
+                heyCyanMedia = state.heyCyanMedia.copy(
+                    inventory = inventory,
+                    capacity = capacity,
+                    capacityPolicyInvalidated = capacityPolicyInvalidated,
+                    capacityPolicyScope = capacityPolicyScope,
+                    capture = state.heyCyanMedia.capture.copy(availability = captureAvailability),
+                ),
+            )
+        }
+    }
+
     private fun isDashboardActionBlockedByExclusiveSession(action: GlassesDashboardAction): Boolean {
         if (
             action is GlassesDashboardAction.SubmitFirmwarePatchRequest ||
@@ -1826,6 +2010,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             } else {
                 binding.btnDataDownload.performClick()
             }
+            GlassesDashboardAction.RetryHeyCyanUnresolvedFiles -> retryHeyCyanUnresolvedFiles()
             GlassesDashboardAction.StopSync -> if (isEyevueSelected()) {
                 stopEyevueMediaSync()
             } else if (isTuneBudsSelected()) {
@@ -2611,35 +2796,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                         }
                     }
                 }
-                binding.btnMediaCount ->{
-                    Toast.makeText(this@MainActivity, "Requesting media count…", Toast.LENGTH_SHORT).show()
-                    val permit = acquireBackgroundGlassesCommand("media-count command")
-                        ?: return@setOnClickListener
-                    try {
-                        LargeDataHandler.getInstance().glassesControl(byteArrayOf(0x02, 0x04)) { _, it ->
-                            try {
-                                if (it.dataType == 4) {
-                                    val mediaCount = it.imageCount + it.videoCount + it.recordCount
-                                    val msg = if (mediaCount > 0) {
-                                        "Media not uploaded - Photos: ${it.imageCount}, Videos: ${it.videoCount}, Records: ${it.recordCount}"
-                                    } else {
-                                        "No pending media on glasses"
-                                    }
-                                    Log.i("MediaCount", msg)
-                                    runOnUiThread {
-                                        Toast.makeText(this@MainActivity, msg, Toast.LENGTH_LONG).show()
-                                    }
-                                }
-                            } finally {
-                                GlassesSessionCoordinator.releaseBackgroundCommand(permit)
-                            }
-                        }
-                        warnIfBackgroundGlassesCommandTimesOut(permit)
-                    } catch (e: Exception) {
-                        GlassesSessionCoordinator.releaseBackgroundCommand(permit)
-                        Log.e("MediaCount", "Failed to request media count", e)
-                    }
-                }
+                binding.btnMediaCount -> requestHeyCyanMediaCounts()
                 binding.btnDataDownload -> {
                     ensureGlassesTransportPermissions("Wi-Fi media sync") {
                         showDownloadFlowPicker()
@@ -3911,6 +4068,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         if (event.connect) {
             otaManager.onBluetoothConnected()
             requestBatteryStatus(showToast = false)
+            refreshHeyCyanMediaCountsAfterReconnect()
         } else {
             val expectedOtaReconnect = otaManager.isAwaitingFreshBleReadiness
             val otaWasActive = otaManager.isActive
@@ -3938,6 +4096,22 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                 Log.i("Ota", "Preserving the OTA lease during its intentional BLE readiness reconnect")
             }
             updateBatteryText(null)
+        }
+    }
+
+    private fun refreshHeyCyanMediaCountsAfterReconnect() {
+        if (!isHeyCyanSelected()) return
+        lifecycleScope.launch {
+            delay(HEY_CYAN_BLE_QUIET_MS)
+            if (!BleOperateManager.getInstance().isConnected ||
+                !BleOperateManager.getInstance().isReady ||
+                !GlassesSessionCoordinator.canRunBackgroundCommand()
+            ) {
+                return@launch
+            }
+            requestHeyCyanMediaCountsForSync { counts ->
+                counts?.let(::updateHeyCyanMediaInventory)
+            }
         }
     }
 
@@ -4711,32 +4885,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                 }
             }
             isHeyCyanSelected() -> {
-                if (!BleOperateManager.getInstance().isConnected) {
-                    Toast.makeText(this, "Connect HeyCyan glasses first.", Toast.LENGTH_SHORT).show()
-                    return
-                }
-                lifecycleScope.launch(Dispatchers.IO) {
-                    try {
-                        // Explicitly separate preview-only from AI-question flows. The underlying
-                        // HeyCyan capture trigger is shared by both, but preview-only code must not
-                        // start the microphone or question workflow around it.
-                        val imageBytes = GeminiLiveGlassesImageCapture()
-                            .captureForPreviewOnly(ImageQuestionPreferences.thumbnailQuality(this@MainActivity))
-                        val file = File(cacheDir, "HeyCyan_Preview_${System.currentTimeMillis()}.jpg")
-                        file.writeBytes(imageBytes)
-                        lastGlassesPreviewFile = file
-                        withContext(Dispatchers.Main) { showCapturedImagePreview(file) }
-                    } catch (error: Exception) {
-                        Log.e("AIHijack", "HeyCyan preview capture failed", error)
-                        withContext(Dispatchers.Main) {
-                            Toast.makeText(
-                                this@MainActivity,
-                                error.message ?: "HeyCyan preview capture failed",
-                                Toast.LENGTH_LONG,
-                            ).show()
-                        }
-                    }
-                }
+                captureAndPreviewHeyCyanImage()
             }
             isEyevueSelected() -> {
                 val manager = getOrCreateEyevueManager()
@@ -4793,6 +4942,170 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             else -> {
                 Toast.makeText(this, "Connect a supported glasses device first.", Toast.LENGTH_SHORT).show()
             }
+        }
+    }
+
+    private data class HeyCyanCaptureDiagnostics(
+        val callbackReceived: Boolean,
+        val callbackDataType: Int?,
+        val callbackErrorCode: Int?,
+        val photoReadyNotificationReceived: Boolean,
+    )
+
+    private fun captureAndPreviewHeyCyanImage() {
+        if (!BleOperateManager.getInstance().isConnected) {
+            Toast.makeText(this, "Connect HeyCyan glasses first.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (!dashboardState.heyCyanMedia.capture.canCaptureAndPreview) {
+            Toast.makeText(this, "Storage full. Sync images before capturing another preview.", Toast.LENGTH_LONG).show()
+            return
+        }
+
+        val permit = acquireBackgroundGlassesCommand("count-confirmed preview capture") ?: return
+        updateHeyCyanCaptureState(
+            availability = HeyCyanCaptureAvailability.AVAILABLE,
+            result = HeyCyanCaptureResult.IN_PROGRESS,
+        )
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val baseline = readHeyCyanMediaCountsForCapture("baseline")
+                    ?: throw IOException("Could not read the baseline photo count")
+                val photoReady = CompletableDeferred<Unit>()
+                check(pendingHeyCyanPreviewPhotoReady.compareAndSet(null, photoReady)) {
+                    "A HeyCyan preview capture is already awaiting a notification"
+                }
+                val diagnostics = requestHeyCyanPreviewCapture(photoReady)
+                Log.i(
+                    "CaptureTrace",
+                    "Preview capture diagnostics ack=${diagnostics.callbackReceived} " +
+                        "dataType=${diagnostics.callbackDataType} error=${diagnostics.callbackErrorCode} " +
+                        "photoReady=${diagnostics.photoReadyNotificationReceived}",
+                )
+                pendingHeyCyanPreviewPhotoReady.compareAndSet(photoReady, null)
+
+                val followUp = readHeyCyanMediaCountsForCapture("follow-up")
+                    ?: throw IOException("Could not read the follow-up photo count")
+                updateHeyCyanMediaInventory(followUp)
+                val captureState = HeyCyanCapturePolicy.resolvePhotoPersistence(
+                    baselinePhotoCount = baseline.photos,
+                    followUpPhotoCount = followUp.photos,
+                )
+                if (captureState.result == HeyCyanCaptureResult.PHOTO_NOT_PERSISTED) {
+                    updateHeyCyanCaptureState(
+                        availability = captureState.availability,
+                        result = captureState.result,
+                    )
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(
+                            this@MainActivity,
+                            "No new photo was saved. Storage may be full; sync images before trying again.",
+                            Toast.LENGTH_LONG,
+                        ).show()
+                    }
+                    return@launch
+                }
+
+                updateHeyCyanCaptureState(
+                    availability = captureState.availability,
+                    result = captureState.result,
+                )
+                val file = File(cacheDir, "HeyCyan_Preview_${System.currentTimeMillis()}.jpg")
+                if (receivePictureThumbnail(file, "count_confirmed_preview", permit)) {
+                    lastGlassesPreviewFile = file
+                    withContext(Dispatchers.Main) { showCapturedImagePreview(file) }
+                } else {
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(
+                            this@MainActivity,
+                            "Photo was saved, but its preview could not be transferred.",
+                            Toast.LENGTH_LONG,
+                        ).show()
+                    }
+                }
+            } catch (error: Exception) {
+                pendingHeyCyanPreviewPhotoReady.set(null)
+                updateHeyCyanCaptureState(
+                    availability = HeyCyanCaptureAvailability.AVAILABLE,
+                    result = HeyCyanCaptureResult.FAILED,
+                )
+                Log.e("CaptureTrace", "Count-confirmed HeyCyan preview capture failed", error)
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(
+                        this@MainActivity,
+                        error.message ?: "HeyCyan preview capture failed",
+                        Toast.LENGTH_LONG,
+                    ).show()
+                }
+            } finally {
+                GlassesSessionCoordinator.releaseBackgroundCommand(permit)
+            }
+        }
+    }
+
+    private suspend fun readHeyCyanMediaCountsForCapture(stage: String): HeyCyanMediaCounts? {
+        val response = CompletableDeferred<HeyCyanMediaCounts?>()
+        try {
+            LargeDataHandler.getInstance().glassesControl(byteArrayOf(0x02, 0x04)) { _, countResponse ->
+                if (!response.isCompleted) {
+                    response.complete(
+                        if (countResponse.dataType == 4) {
+                            HeyCyanMediaCounts(
+                                photos = countResponse.imageCount,
+                                videos = countResponse.videoCount,
+                                audio = countResponse.recordCount,
+                            )
+                        } else {
+                            Log.w("CaptureTrace", "$stage count response dataType=${countResponse.dataType}")
+                            null
+                        },
+                    )
+                }
+            }
+        } catch (error: Exception) {
+            Log.e("CaptureTrace", "Failed to request $stage media count", error)
+            return null
+        }
+        return withTimeoutOrNull(HEY_CYAN_CAPTURE_COUNT_TIMEOUT_MS) { response.await() }
+    }
+
+    private suspend fun requestHeyCyanPreviewCapture(
+        photoReady: CompletableDeferred<Unit>,
+    ): HeyCyanCaptureDiagnostics {
+        val callback = CompletableDeferred<Pair<Int, Int>>()
+        val thumbnailSize = ImageQuestionPreferences.thumbnailQuality(this).sdkValue.toByte()
+        val command = byteArrayOf(0x02, 0x01, 0x06, thumbnailSize, thumbnailSize)
+        LargeDataHandler.getInstance().glassesControl(command) { _, captureResponse ->
+            if (!callback.isCompleted) {
+                callback.complete(captureResponse.dataType to captureResponse.errorCode)
+            }
+        }
+        val callbackResult = withTimeoutOrNull(HEY_CYAN_CAPTURE_ACK_TIMEOUT_MS) { callback.await() }
+        val photoReadyReceived = withTimeoutOrNull(HEY_CYAN_CAPTURE_NOTIFY_TIMEOUT_MS) {
+            photoReady.await()
+            true
+        } ?: false
+        return HeyCyanCaptureDiagnostics(
+            callbackReceived = callbackResult != null,
+            callbackDataType = callbackResult?.first,
+            callbackErrorCode = callbackResult?.second,
+            photoReadyNotificationReceived = photoReadyReceived,
+        )
+    }
+
+    private fun updateHeyCyanCaptureState(
+        availability: HeyCyanCaptureAvailability,
+        result: HeyCyanCaptureResult,
+    ) {
+        updateDashboardState { state ->
+            state.copy(
+                heyCyanMedia = state.heyCyanMedia.copy(
+                    capture = state.heyCyanMedia.capture.copy(
+                        availability = availability,
+                        result = result,
+                    ),
+                ),
+            )
         }
     }
 
@@ -4923,6 +5236,21 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                 purpose = MediaDownloadPurpose.FULL_SYNC,
             )
         }
+    }
+
+    private fun retryHeyCyanUnresolvedFiles() {
+        if (!isHeyCyanSelected() || mediaSyncQuarantined) return
+        if (heyCyanSyncTerminalResult != HeyCyanSyncTerminalResult.COMPLETED_WITH_FAILED_FILES) return
+        val unresolved = heyCyanTransferLedger?.unresolvedEntries
+            ?.map { it.item }
+            ?.toSet()
+            .orEmpty()
+        if (unresolved.isEmpty()) return
+        pendingHeyCyanRetryItems = unresolved
+        startDataDownload(
+            mode = downloadFlowMode,
+            purpose = MediaDownloadPurpose.FULL_SYNC,
+        )
     }
 
     private fun showCapturedImagePreview(file: File) {
@@ -8075,8 +8403,16 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         isRetry: Boolean = false,
         afterP2pTeardown: Boolean = false,
         purpose: MediaDownloadPurpose = MediaDownloadPurpose.FULL_SYNC,
+        preflightValidated: Boolean = false,
     ) {
         if (rejectHeyCyanOnlyFeature("Wi-Fi media sync")) return
+        if (!preflightValidated && !afterP2pTeardown) {
+            beginHeyCyanSyncDiagnostics()
+        }
+        setHeyCyanMediaSyncStage(
+            HeyCyanMediaSyncStage.PREFLIGHT,
+            "Checking Bluetooth and Wi-Fi Direct readiness.",
+        )
 
         if (!hasBluetooth(this) || !hasWifiP2pPermission(this)) {
             ensureGlassesTransportPermissions("Wi-Fi media sync") {
@@ -8086,8 +8422,26 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                     isRetry = isRetry,
                     afterP2pTeardown = afterP2pTeardown,
                     purpose = purpose,
+                    preflightValidated = preflightValidated,
                 )
             }
+            return
+        }
+
+        if (mediaSyncQuarantined) {
+            failHeyCyanMediaSyncPreflight(
+                mediaSyncQuarantineReason ?: "Previous media-sync cleanup is still unconfirmed.",
+            )
+            return
+        }
+
+        if (!preflightValidated && !afterP2pTeardown) {
+            beginHeyCyanMediaSyncPreflight(
+                mode = mode,
+                retryCount = retryCount,
+                isRetry = isRetry,
+                purpose = purpose,
+            )
             return
         }
 
@@ -8103,6 +8457,10 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         // Check Bluetooth connection status
         if (!BleOperateManager.getInstance().isConnected) {
             Log.e("DataDownload", "Bluetooth not connected. Please connect to glasses first.")
+            setHeyCyanMediaSyncStage(
+                HeyCyanMediaSyncStage.FAILED,
+                "Bluetooth is not connected to the glasses.",
+            )
             if (isHighQualityImageTransfer()) {
                 finishHighQualityImageFailure("Bluetooth disconnected before full-resolution image transfer could start.")
                 return
@@ -8119,6 +8477,10 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         val wifiManager = getSystemService(Context.WIFI_SERVICE) as android.net.wifi.WifiManager
         if (!wifiManager.isWifiEnabled) {
             Log.e("DataDownload", "WiFi is disabled. WiFi must be on for P2P sync.")
+            setHeyCyanMediaSyncStage(
+                HeyCyanMediaSyncStage.FAILED,
+                "Wi-Fi is disabled for Wi-Fi Direct sync.",
+            )
             if (isHighQualityImageTransfer()) {
                 finishHighQualityImageFailure("Wi-Fi must be enabled to retrieve the full-resolution image.")
                 return
@@ -8176,6 +8538,11 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         downloadPhoneIsGroupOwner = null
         downloadInProgress = false
         downloadResolvedHttpIp = null
+        downloadExitTransferTimeoutJob?.cancel()
+        downloadExitTransferTimeoutJob = null
+        downloadExitTransferResponsePending = false
+        downloadExitTransferTimedOut = false
+        pendingDownloadTeardownFinish = null
         lastDownloadBleIpAtMs = 0L
         officialDisconnectRecoveryJob?.cancel()
         officialDisconnectRecoveryJob = null
@@ -8188,6 +8555,10 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         setTransferUiVisible(true)
         setTransferFlowLabel(mode)
         setTransferDetail("Starting sync (${mode.label})...")
+        setHeyCyanMediaSyncStage(
+            HeyCyanMediaSyncStage.ENTERING_TRANSFER_MODE,
+            "Requesting transfer mode from the glasses.",
+        )
         startDownloadInitialPhaseWatchdog()
 
         if (!downloadNotifyListenerRegistered) {
@@ -8338,23 +8709,10 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                     }
                 }
                 if (shouldRecover) {
-                    if (downloadFlowMode == GlassesSyncFlow.OFFICIAL_HEYCYAN) {
-                        Log.i("DataDownload", "Official flow: P2P disconnected during sync; restarting discovery in 2000ms")
-                        setTransferDetail("P2P disconnected; retrying official flow...")
-                        downloadWifiP2pManager?.discoverPeersStable()
-                        officialDisconnectRecoveryJob?.cancel()
-                        officialDisconnectRecoveryJob = CoroutineScope(Dispatchers.Main).launch {
-                            delay(2000)
-                            if (downloadCancelledByUser) return@launch
-                            if (downloadP2pConnected) return@launch
-                            downloadWifiP2pManager?.startPeerDiscovery()
-                        }
-                    } else {
-                        Log.i("DataDownload", "P2P disconnected during sync; restarting peer discovery")
-                        setTransferDetail("P2P disconnected; retrying discovery...")
-                        downloadWifiP2pManager?.discoverPeersStable()
-                        downloadWifiP2pManager?.startPeerDiscovery()
-                    }
+                    quarantineHeyCyanMediaSync(
+                        "Wi-Fi Direct disconnected during sync. A fresh preflight is required before retrying.",
+                        sendExitTransfer = true,
+                    )
                 }
             }
 
@@ -8406,6 +8764,10 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
         // Start scanning for the glasses over WiFi Direct
         wifiP2pManager.startPeerDiscovery()
+        setHeyCyanMediaSyncStage(
+            HeyCyanMediaSyncStage.WAITING_FOR_P2P,
+            "Waiting for the glasses Wi-Fi Direct group.",
+        )
 
         setTransferDetail(
             when (mode) {
@@ -8417,6 +8779,113 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         // Ask the glasses (over BLE) to bring up WiFi/P2P and report their IP,
         // mirroring the official app's importAlbum() flow.
         sendTransferModeCommandWithRetry(sessionId = downloadSessionId)
+    }
+
+    private fun beginHeyCyanMediaSyncPreflight(
+        mode: GlassesSyncFlow,
+        retryCount: Int,
+        isRetry: Boolean,
+        purpose: MediaDownloadPurpose,
+    ) {
+        val ble = BleOperateManager.getInstance()
+        val setup = HeyCyanBleSetupTrace.snapshot()
+        val quietMs = SystemClock.elapsedRealtime() - setup.lastEventAtMs
+        if (!ble.isConnected || !ble.isReady || setup.lastEvent != "servicesDiscovered" || quietMs < HEY_CYAN_BLE_QUIET_MS) {
+            failHeyCyanMediaSyncPreflight("BLE is not connected, ready, and quiet yet. Wait briefly, then retry sync.")
+            return
+        }
+        if (!GlassesSessionCoordinator.canRunBackgroundCommand()) {
+            failHeyCyanMediaSyncPreflight("Another glasses command or workflow is still active.")
+            return
+        }
+        val connectivity = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        if (boundNetwork != null || connectivity.boundNetworkForProcess != null) {
+            failHeyCyanMediaSyncPreflight("The app is still bound to a previous network connection.")
+            return
+        }
+
+        val p2p = WifiP2pManagerSingleton.getInstance(this)
+        if (p2p.isConnecting() || p2p.isConnected()) {
+            failHeyCyanMediaSyncPreflight("A Wi-Fi Direct connection is already active.")
+            return
+        }
+
+        val attemptId = ++downloadPreflightAttemptId
+        var resolved = false
+        downloadPreflightJob?.cancel()
+        downloadPreflightJob = lifecycleScope.launch {
+            delay(P2P_PREFLIGHT_QUERY_TIMEOUT_MS)
+            if (!resolved && attemptId == downloadPreflightAttemptId) {
+                failHeyCyanMediaSyncPreflight("Could not confirm that the previous Wi-Fi Direct group is gone.")
+            }
+        }
+        p2p.queryGroupFormed { groupFormed ->
+            if (resolved || attemptId != downloadPreflightAttemptId) return@queryGroupFormed
+            resolved = true
+            downloadPreflightJob?.cancel()
+            downloadPreflightJob = null
+            if (groupFormed != false) {
+                failHeyCyanMediaSyncPreflight(
+                    if (groupFormed == true) {
+                        "A Wi-Fi Direct group is already active. Finish its cleanup before syncing."
+                    } else {
+                        "Could not confirm Wi-Fi Direct group state."
+                    },
+                )
+                return@queryGroupFormed
+            }
+            requestHeyCyanMediaCountsForSync { beforeCounts ->
+                if (beforeCounts == null) {
+                    failHeyCyanMediaSyncPreflight("Could not read media counts before starting sync.")
+                    return@requestHeyCyanMediaCountsForSync
+                }
+                pendingHeyCyanSyncBeforeCounts = beforeCounts
+                updateHeyCyanMediaInventory(beforeCounts)
+                startDataDownload(
+                    mode = mode,
+                    retryCount = retryCount,
+                    isRetry = isRetry,
+                    purpose = purpose,
+                    preflightValidated = true,
+                )
+            }
+        }
+    }
+
+    private fun failHeyCyanMediaSyncPreflight(reason: String) {
+        Log.w("DataDownload", "HeyCyan media-sync preflight failed: $reason")
+        setHeyCyanMediaSyncStage(HeyCyanMediaSyncStage.FAILED, reason)
+        Toast.makeText(this, reason, Toast.LENGTH_LONG).show()
+    }
+
+    private fun beginHeyCyanSyncDiagnostics() {
+        val attemptId = ++heyCyanSyncDiagnosticsAttemptId
+        val store = HeyCyanSyncDiagnosticsStore(
+            File(filesDir, "heycyan-transfer-ledger/attempt_${attemptId}_diagnostics.tsv"),
+        )
+        heyCyanSyncDiagnosticsStore = store
+        val setup = HeyCyanBleSetupTrace.snapshot()
+        val identity = runCatching {
+            HeyCyanSyncDiagnosticsStore.digest(
+                "${DeviceManager.getInstance().deviceName.orEmpty()}|${DeviceManager.getInstance().deviceAddress.orEmpty()}",
+            )
+        }.getOrDefault("unknown")
+        store.append(
+            "attempt_started",
+            mapOf(
+                "device_identity_hash" to identity,
+                "hardware" to MyApplication.getInstance().hardwareVersion.orEmpty(),
+                "firmware" to MyApplication.getInstance().firmwareVersion.orEmpty(),
+                "ble_setup_sequence" to setup.sequence.toString(),
+                "ble_setup_event" to setup.lastEvent,
+                "ble_setup_event_at_ms" to setup.lastEventAtMs.toString(),
+            ),
+        )
+    }
+
+    private fun recordHeyCyanSyncDiagnostic(event: String, fields: Map<String, String> = emptyMap()) {
+        runCatching { heyCyanSyncDiagnosticsStore?.append(event, fields) }
+            .onFailure { Log.e("DataDownload", "Could not persist HeyCyan sync diagnostics", it) }
     }
 
     /**
@@ -8439,6 +8908,10 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         transferModeCommandSentAtMs = System.currentTimeMillis()
         transferModeCommandCallbackReceived = false
         transferModeCommandEvidenceReceived = false
+        recordHeyCyanSyncDiagnostic(
+            "transfer_mode_sent",
+            mapOf("attempt" to attempt.toString(), "session_id" to sessionId.toString()),
+        )
         Log.i(
             "DataDownload",
             "Sending glassesControl[0x02,0x01,0x04] (attempt $attempt/$maxAttempts); " +
@@ -8460,12 +8933,10 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             )
             withContext(Dispatchers.Main) {
                 setTransferDetail("Glasses did not acknowledge transfer mode")
-                if (downloadFlowMode == GlassesSyncFlow.OFFICIAL_HEYCYAN) {
-                    stopOfficialFlowForRetry(
-                        "The glasses did not acknowledge transfer mode within 10 seconds.",
-                        resetDeviceP2p = false,
-                    )
-                }
+                quarantineHeyCyanMediaSync(
+                    "The glasses did not acknowledge transfer mode within 10 seconds.",
+                    sendExitTransfer = false,
+                )
             }
         }
         LargeDataHandler.getInstance().glassesControl(
@@ -8476,6 +8947,15 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             transferModeCommandTimeoutJob = null
             val callbackLatencyMs = System.currentTimeMillis() - transferModeCommandSentAtMs
             transferModeCommandCallbackLatencyMs = callbackLatencyMs
+            recordHeyCyanSyncDiagnostic(
+                "transfer_mode_callback",
+                mapOf(
+                    "attempt" to attempt.toString(),
+                    "data_type" to resp.dataType.toString(),
+                    "error_code" to resp.errorCode.toString(),
+                    "latency_ms" to callbackLatencyMs.toString(),
+                ),
+            )
             Log.i(
                 "DataDownload",
                 "glassesControl[0x02,0x01,0x04] (attempt $attempt/$maxAttempts) -> " +
@@ -8508,6 +8988,11 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                         )
                     }
                 }
+            } else if (resp.errorCode == -1) {
+                quarantineHeyCyanMediaSync(
+                    "The glasses rejected transfer mode after $maxAttempts attempts.",
+                    sendExitTransfer = true,
+                )
             }
         }
     }
@@ -8543,6 +9028,21 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         }
         if (resetAccepted == null) {
             Log.w("DataDownload", "Pre-retry P2P reset timed out; retaining the current media session")
+            withContext(Dispatchers.Main) {
+                quarantineHeyCyanMediaSync(
+                    "The Wi-Fi Direct reset timed out; reconnect the glasses before retrying sync.",
+                    sendExitTransfer = false,
+                )
+            }
+            return false
+        }
+        if (!resetAccepted) {
+            withContext(Dispatchers.Main) {
+                quarantineHeyCyanMediaSync(
+                    "The Wi-Fi Direct reset was rejected; reconnect the glasses before retrying sync.",
+                    sendExitTransfer = true,
+                )
+            }
             return false
         }
         return resetAccepted && isDownloadControlActive(sessionId)
@@ -8638,6 +9138,21 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         }
     }
 
+    private fun setHeyCyanMediaSyncStage(stage: HeyCyanMediaSyncStage, detail: String) {
+        if (!isHeyCyanSelected()) return
+        recordHeyCyanSyncDiagnostic(
+            "sync_stage",
+            mapOf("stage" to stage.name, "detail_hash" to HeyCyanSyncDiagnosticsStore.digest(detail)),
+        )
+        updateDashboardState { state ->
+            state.copy(
+                heyCyanMedia = state.heyCyanMedia.copy(
+                    sync = state.heyCyanMedia.sync.copy(stage = stage, detail = detail),
+                ),
+            )
+        }
+    }
+
     private fun setTransferFlowLabel(mode: GlassesSyncFlow) {
         binding.tvTransferFlow.text = "Flow: ${mode.label}"
         updateDashboardState { state ->
@@ -8647,6 +9162,9 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
     private fun createDownloadSession() {
         downloadSessionJob?.cancel()
+        downloadAggregateDeadlineJob?.cancel()
+        downloadAggregateDeadlineJob = null
+        heyCyanSyncTerminalResult = null
         val job = SupervisorJob()
         downloadSessionJob = job
         downloadSessionScope = CoroutineScope(job + Dispatchers.IO)
@@ -8662,6 +9180,9 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     }
 
     private fun cancelDownloadSession() {
+        closeActiveDownloadHttpWork()
+        downloadAggregateDeadlineJob?.cancel()
+        downloadAggregateDeadlineJob = null
         vendorAlbumDownloader?.cancel()
         vendorAlbumDownloader?.clear()
         vendorAlbumDownloader = null
@@ -8674,6 +9195,67 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         return sessionId == downloadSessionId &&
             downloadSessionJob?.isActive == true &&
             !downloadCancelledByUser
+    }
+
+    private fun startHeyCyanAggregateDeadline(sessionId: Long, itemCount: Int) {
+        downloadAggregateDeadlineJob?.cancel()
+        val deadlineMs = HeyCyanSyncPolicy.aggregateDeadlineMs(itemCount)
+        downloadAggregateDeadlineJob = launchDownloadSession { activeSessionId ->
+            delay(deadlineMs)
+            if (activeSessionId != sessionId || !isDownloadSessionActive(sessionId)) return@launchDownloadSession
+            withContext(Dispatchers.Main) {
+                if (!isDownloadSessionActive(sessionId)) return@withContext
+                closeActiveDownloadHttpWork()
+                showDownloadError("Sync exceeded its ${deadlineMs / 1000}s transfer deadline.")
+            }
+        }
+    }
+
+    private fun closeActiveDownloadHttpWork() {
+        activeDownloadHttpConnection.getAndSet(null)?.disconnect()
+        vendorAlbumDownloader?.cancel()
+    }
+
+    private fun consumeDownloadHttpStream(
+        connection: HttpURLConnection,
+        input: InputStream,
+        contentLength: Long,
+        onStream: ((InputStream, Long) -> Unit)?,
+    ) {
+        val lastProgressAtMs = java.util.concurrent.atomic.AtomicLong(System.currentTimeMillis())
+        val watchdog = downloadSessionScope?.launch {
+            while (isActive) {
+                delay(5_000)
+                if (HeyCyanSyncPolicy.progressStalled(
+                        nowMs = System.currentTimeMillis(),
+                        lastProgressAtMs = lastProgressAtMs.get(),
+                        watchdogMs = 45_000,
+                    )
+                ) {
+                    Log.w("DataDownload", "No HTTP byte progress for 45s; closing active download connection")
+                    connection.disconnect()
+                    return@launch
+                }
+            }
+        }
+        val progressInput = object : FilterInputStream(input) {
+            override fun read(): Int {
+                val value = super.read()
+                if (value >= 0) lastProgressAtMs.set(System.currentTimeMillis())
+                return value
+            }
+
+            override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+                val read = super.read(buffer, offset, length)
+                if (read > 0) lastProgressAtMs.set(System.currentTimeMillis())
+                return read
+            }
+        }
+        try {
+            onStream?.invoke(progressInput, contentLength)
+        } finally {
+            watchdog?.cancel()
+        }
     }
 
     private fun isDownloadControlActive(sessionId: Long): Boolean {
@@ -8793,14 +9375,9 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                 return@launch
             }
 
-            if (downloadFlowMode == GlassesSyncFlow.OFFICIAL_HEYCYAN && officialFlowRetryCount < officialFlowRetryLimit) {
-                restartOfficialWholeFlow("initial sync timeout after ${waitedSeconds}s")
-                return@launch
-            }
-
-            setTransferDetail("Sync is taking longer than expected")
-            maybeShowP2pSyncLogHelp(
-                reason = "CyanBridge got stuck before media transfer started. The sync button was pressed ${waitedSeconds}s ago and the transfer counters never advanced.",
+            quarantineHeyCyanMediaSync(
+                "Timed out waiting for Wi-Fi Direct or the glasses IP after ${waitedSeconds} seconds.",
+                sendExitTransfer = true,
             )
         }
     }
@@ -8847,16 +9424,33 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     }
 
     private fun restartOfficialWholeFlow(reason: String) {
-        val nextRetry = officialFlowRetryCount + 1
-        Log.w(
-            "DataDownload",
-            "Official flow retrying whole import sequence ($nextRetry/$officialFlowRetryLimit) because $reason"
+        Log.w("DataDownload", "Official flow will not automatically retry: $reason")
+        quarantineHeyCyanMediaSync(
+            reason = "$reason. Retry only after teardown is confirmed.",
+            sendExitTransfer = true,
         )
-        setTransferDetail("Official flow retrying sync...")
-        startDataDownload(
-            mode = GlassesSyncFlow.OFFICIAL_HEYCYAN,
-            retryCount = nextRetry,
-            isRetry = true,
+    }
+
+    private fun quarantineHeyCyanMediaSync(reason: String, sendExitTransfer: Boolean) {
+        if (!isHeyCyanSelected()) return
+        mediaSyncQuarantined = true
+        mediaSyncQuarantineReason = reason
+        downloadCancelledByUser = true
+        finishDownloadInitialPhase("quarantined: $reason")
+        setHeyCyanMediaSyncStage(HeyCyanMediaSyncStage.FAILED, reason)
+        setTransferDetail(reason)
+        if (downloadP2pTeardownInProgress) {
+            Log.w("DataDownload", "Media sync remains quarantined while existing teardown finishes: $reason")
+            return
+        }
+        teardownDownloadP2pSession(
+            sendExitTransfer = sendExitTransfer,
+            hideTransferUi = true,
+            onTeardownComplete = {
+                mediaSyncQuarantined = false
+                mediaSyncQuarantineReason = null
+                setHeyCyanMediaSyncStage(HeyCyanMediaSyncStage.FAILED, reason)
+            },
         )
     }
 
@@ -8987,6 +9581,14 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     
     private suspend fun downloadMediaList(deviceIp: String, sessionId: Long) {
         if (!isDownloadSessionActive(sessionId)) return
+        withContext(Dispatchers.Main) {
+            if (isDownloadSessionActive(sessionId)) {
+                setHeyCyanMediaSyncStage(
+                    HeyCyanMediaSyncStage.READING_MEDIA_CONFIG,
+                    "Reading media.config from the glasses.",
+                )
+            }
+        }
         if (downloadFlowMode == GlassesSyncFlow.OFFICIAL_HEYCYAN) {
             downloadVendorMediaList(deviceIp, sessionId)
             return
@@ -9022,6 +9624,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                 parseMediaList(mediaConfig, deviceIp, sessionId)
             } ?: run {
                 Log.e("DataDownload", "Failed to download media list.")
+                persistHeyCyanManifestFailure(sessionId, "media.config was unavailable")
                 withContext(Dispatchers.Main) {
                     if (isDownloadSessionActive(sessionId)) {
                         showDownloadError("Failed to download media list.")
@@ -9102,6 +9705,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
         withContext(Dispatchers.Main) {
             if (isDownloadSessionActive(sessionId)) {
+                persistHeyCyanManifestFailure(sessionId, "media.config download failed: $lastError")
                 showDownloadError("Failed to download media list with HeyCyan downloader: $lastError")
             }
         }
@@ -9115,48 +9719,54 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                 coroutineContext.ensureActive()
                 if (!isDownloadSessionActive(sessionId)) return
                 val photoOnlyMode = syncAllRemainingPhotosMode
-                // Split by line, each line should be a file name
-                val lines = content.trim().lines()
-                val jpgFiles = mutableListOf<String>()
-                val mp4Files = mutableListOf<String>()
-                val opusFiles = mutableListOf<String>()
-                val vendorQueue = mutableListOf<VendorMediaItem>()
-                var otherFiles = 0
-                
-                lines.forEach { line ->
-                    val trimmedLine = line.trim()
-                    if (trimmedLine.isNotEmpty()) {
-                        when {
-                            trimmedLine.endsWith(".jpg", ignoreCase = true) ||
-                                trimmedLine.endsWith(".jpeg", ignoreCase = true) -> {
-                                jpgFiles.add(trimmedLine)
-                                vendorQueue.add(VendorMediaItem(trimmedLine, VendorMediaType.PHOTO))
-                                Log.i("DataDownload", "Found JPG file: $trimmedLine")
-                            }
-
-                            trimmedLine.endsWith(".mp4", ignoreCase = true) -> {
-                                mp4Files.add(trimmedLine)
-                                vendorQueue.add(VendorMediaItem(trimmedLine, VendorMediaType.VIDEO))
-                                Log.i("DataDownload", "Found MP4 file: $trimmedLine")
-                            }
-
-                            trimmedLine.endsWith(".opus", ignoreCase = true) -> {
-                                opusFiles.add(trimmedLine)
-                                vendorQueue.add(VendorMediaItem(trimmedLine, VendorMediaType.AUDIO))
-                                Log.i("DataDownload", "Found OPUS file: $trimmedLine")
-                            }
-
-                            else -> {
-                                otherFiles++
-                                Log.i("DataDownload", "Found other file: $trimmedLine")
-                            }
-                        }
-                    }
+                val parsedManifest = HeyCyanMediaManifest.parse(content).getOrElse { error ->
+                    recordHeyCyanSyncDiagnostic(
+                        "manifest_failed",
+                        mapOf("reason_hash" to HeyCyanSyncDiagnosticsStore.digest(error.message ?: "media.config was malformed")),
+                    )
+                    persistHeyCyanManifestFailure(sessionId, error.message ?: "media.config was malformed")
+                    throw IllegalArgumentException(error.message ?: "media.config was malformed", error)
                 }
+                val retryItems = pendingHeyCyanRetryItems
+                val manifest = if (retryItems.isEmpty()) {
+                    parsedManifest
+                } else {
+                    val selectedItems = parsedManifest.items.filter { it in retryItems }
+                    require(selectedItems.isNotEmpty()) {
+                        "None of the unresolved media entries were present in the fresh media.config"
+                    }
+                    HeyCyanMediaManifest(selectedItems)
+                }
+                recordHeyCyanSyncDiagnostic(
+                    "manifest_loaded",
+                    mapOf(
+                        "digest" to HeyCyanSyncDiagnosticsStore.digest(content),
+                        "photos" to manifest.photos.size.toString(),
+                        "videos" to manifest.videos.size.toString(),
+                        "audio" to manifest.audio.size.toString(),
+                        "retry_subset" to retryItems.isNotEmpty().toString(),
+                    ),
+                )
+                val jpgFiles = manifest.photos.map { it.remoteFileName }
+                val mp4Files = manifest.videos.map { it.remoteFileName }
+                val opusFiles = manifest.audio.map { it.remoteFileName }
+                val vendorQueue = manifest.items.map { item ->
+                    VendorMediaItem(
+                        fileName = item.remoteFileName,
+                        type = when (item.type) {
+                            HeyCyanMediaType.PHOTO -> VendorMediaType.PHOTO
+                            HeyCyanMediaType.VIDEO -> VendorMediaType.VIDEO
+                            HeyCyanMediaType.AUDIO -> VendorMediaType.AUDIO
+                        },
+                    )
+                }
+                beginHeyCyanTransferLedger(manifest, sessionId)
+                pendingHeyCyanRetryItems = emptySet()
+                startHeyCyanAggregateDeadline(sessionId, manifest.items.size)
 
                 Log.i(
                     "DataDownload",
-                    "Media list parsed: jpg=${jpgFiles.size}, mp4=${mp4Files.size}, opus=${opusFiles.size}, other=$otherFiles"
+                    "Media list parsed: jpg=${jpgFiles.size}, mp4=${mp4Files.size}, opus=${opusFiles.size}"
                 )
 
                 if (isHighQualityImageTransfer()) {
@@ -9226,6 +9836,14 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                 }
 
                 // Download everything we understand. Keep P2P bound until all downloads finish.
+                withContext(Dispatchers.Main) {
+                    if (isDownloadSessionActive(sessionId)) {
+                        setHeyCyanMediaSyncStage(
+                            HeyCyanMediaSyncStage.DOWNLOADING,
+                            "Downloading the media listed in media.config.",
+                        )
+                    }
+                }
                 if (downloadFlowMode == GlassesSyncFlow.OFFICIAL_HEYCYAN) {
                     downloadAllMediaFilesVendor(vendorQueue, deviceIp, sessionId)
                 } else {
@@ -9244,6 +9862,118 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                 }
             }
         }
+
+    private fun beginHeyCyanTransferLedger(manifest: HeyCyanMediaManifest, sessionId: Long) {
+        val ledger = HeyCyanTransferLedger(manifest.items)
+        heyCyanTransferLedger = ledger
+        heyCyanSyncBeforeCounts = pendingHeyCyanSyncBeforeCounts
+        pendingHeyCyanSyncBeforeCounts = null
+        heyCyanTransferLedgerStore = HeyCyanTransferLedgerStore(
+            File(filesDir, "heycyan-transfer-ledger/session_$sessionId.tsv"),
+        )
+        heyCyanSyncCountEvidenceStore = HeyCyanSyncCountEvidenceStore(
+            File(filesDir, "heycyan-transfer-ledger/session_${sessionId}_outcome.tsv"),
+        )
+        persistHeyCyanTransferLedger()
+    }
+
+    private fun recordHeyCyanTransferResult(
+        fileName: String,
+        type: HeyCyanMediaType,
+        success: Boolean,
+        byteCount: Long,
+        failureReason: String = "Media download or import failed",
+    ) {
+        val ledger = heyCyanTransferLedger ?: return
+        val item = ledger.entries.firstOrNull {
+            it.item.remoteFileName == fileName && it.item.type == type
+        }?.item ?: return
+        if (success && byteCount > 0L) {
+            ledger.complete(item, byteCount)
+        } else {
+            ledger.fail(item, failureReason, byteCount)
+        }
+        recordHeyCyanSyncDiagnostic(
+            "file_result",
+            mapOf(
+                "file_hash" to HeyCyanSyncDiagnosticsStore.digest(fileName),
+                "type" to type.name,
+                "success" to success.toString(),
+                "byte_count" to byteCount.toString(),
+                "reason_hash" to if (success) "" else HeyCyanSyncDiagnosticsStore.digest(failureReason),
+            ),
+        )
+        persistHeyCyanTransferLedger()
+    }
+
+    private fun persistHeyCyanTransferLedger() {
+        val ledger = heyCyanTransferLedger ?: return
+        runCatching { heyCyanTransferLedgerStore?.persist(ledger) }
+            .onFailure { Log.e("DataDownload", "Could not persist HeyCyan transfer ledger", it) }
+        updateHeyCyanSyncSummary(ledger)
+    }
+
+    private fun updateHeyCyanSyncSummary(ledger: HeyCyanTransferLedger) {
+        fun counts(predicate: (com.fersaiyan.cyanbridge.media.HeyCyanTransferLedgerEntry) -> Boolean) =
+            HeyCyanMediaTypeCounts(
+                photos = ledger.entries.count { it.item.type == HeyCyanMediaType.PHOTO && predicate(it) },
+                videos = ledger.entries.count { it.item.type == HeyCyanMediaType.VIDEO && predicate(it) },
+                audio = ledger.entries.count { it.item.type == HeyCyanMediaType.AUDIO && predicate(it) },
+            )
+        val failed = counts { it.status == com.fersaiyan.cyanbridge.media.HeyCyanTransferItemStatus.FAILED }
+        updateDashboardState { state ->
+            state.copy(
+                heyCyanMedia = state.heyCyanMedia.copy(
+                    syncSummary = HeyCyanMediaSyncSummaryUiState(
+                        planned = counts { true },
+                        completed = counts {
+                            it.status == com.fersaiyan.cyanbridge.media.HeyCyanTransferItemStatus.COMPLETED
+                        },
+                        failed = failed,
+                        canRetryUnresolvedFiles =
+                            failed.total > 0 &&
+                                heyCyanSyncTerminalResult == HeyCyanSyncTerminalResult.COMPLETED_WITH_FAILED_FILES,
+                    ),
+                ),
+            )
+        }
+    }
+
+    private fun persistHeyCyanSyncCountEvidence(afterCounts: HeyCyanMediaCounts?) {
+        val ledger = heyCyanTransferLedger ?: return
+        val before = heyCyanSyncBeforeCounts?.let { HeyCyanSyncMediaCounts(it.photos, it.videos, it.audio) }
+        val after = afterCounts?.let { HeyCyanSyncMediaCounts(it.photos, it.videos, it.audio) }
+        heyCyanSyncCountEvidenceStore?.persist(
+            HeyCyanSyncCountEvidence(
+                terminalResult = heyCyanSyncTerminalResult ?: HeyCyanSyncTerminalResult.FAILED_BEFORE_MANIFEST,
+                manifestPhotos = ledger.entries.count { it.item.type == HeyCyanMediaType.PHOTO },
+                manifestVideos = ledger.entries.count { it.item.type == HeyCyanMediaType.VIDEO },
+                manifestAudio = ledger.entries.count { it.item.type == HeyCyanMediaType.AUDIO },
+                before = before,
+                after = after,
+            ),
+        )
+        recordHeyCyanSyncDiagnostic(
+            "media_counts",
+            mapOf(
+                "terminal_result" to (heyCyanSyncTerminalResult?.name ?: "FAILED_BEFORE_MANIFEST"),
+                "before" to (heyCyanSyncBeforeCounts?.let { "${it.photos},${it.videos},${it.audio}" } ?: ""),
+                "after" to (afterCounts?.let { "${it.photos},${it.videos},${it.audio}" } ?: ""),
+            ),
+        )
+    }
+
+    private fun persistHeyCyanManifestFailure(sessionId: Long, reason: String) {
+        recordHeyCyanSyncDiagnostic(
+            "manifest_failed",
+            mapOf("session_id" to sessionId.toString(), "reason_hash" to HeyCyanSyncDiagnosticsStore.digest(reason)),
+        )
+        runCatching {
+            val directory = File(filesDir, "heycyan-transfer-ledger")
+            directory.mkdirs()
+            File(directory, "session_${sessionId}_manifest_error.txt").writeText(reason.take(1_024))
+        }.onFailure { Log.e("DataDownload", "Could not persist media.config failure diagnostic", it) }
+    }
 
     private suspend fun downloadLatestHighQualityImage(
         jpgFiles: List<String>,
@@ -9447,76 +10177,38 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             coroutineContext.ensureActive()
             if (!isDownloadSessionActive(sessionId)) return
 
-            var imported = false
-            for (attempt in 1..2) {
-                if (imported || !isDownloadSessionActive(sessionId) || officialMediaErrorCount > 1) break
-                coroutineContext.ensureActive()
-
-                val url = "http://$deviceIp/files/${item.fileName}"
-                val startedAtMs = System.currentTimeMillis()
-                withContext(Dispatchers.Main) {
-                    if (isDownloadSessionActive(sessionId)) {
-                        val (done, total) = vendorTypeProgress(item.type)
-                        setTransferDetail(
-                            "Downloading ${item.type.progressLabel} ${done + 1}/$total with HeyCyan downloader..."
-                        )
-                    }
-                }
-                Log.i(
-                    "DataDownload",
-                    "HeyCyan queue downloading ${item.fileName} (attempt $attempt/2): $url"
-                )
-
-                val result = downloader.download(url, item.fileName) { downloaded, total ->
-                    maybeReportFileProgress(
-                        sessionId = sessionId,
-                        mediaType = item.type.progressLabel,
-                        fileName = item.fileName,
-                        bytesCopied = downloaded,
-                        totalBytes = total,
-                        startedAtMs = startedAtMs,
-                    )
-                }
-
-                if (result.isSuccess) {
-                    val file = result.file
-                    imported = file != null && importVendorMediaFile(file, item)
-                    file?.delete()
-                    if (imported) {
-                        Log.i("DataDownload", "HeyCyan queue imported: ${item.fileName}")
-                    } else {
-                        officialMediaErrorCount++
-                        Log.e(
-                            "DataDownload",
-                            "HeyCyan queue could not import ${item.fileName}; errors=$officialMediaErrorCount"
-                        )
-                    }
-                } else {
-                    officialMediaErrorCount++
-                    Log.w(
-                        "DataDownload",
-                        "HeyCyan queue download failed for ${item.fileName} (attempt $attempt/2, errors=$officialMediaErrorCount): code=${result.errorCode}, detail=${result.errorDetail}"
-                    )
-                }
-
-                if (!imported && officialMediaErrorCount <= 1) {
-                    withContext(Dispatchers.Main) {
-                        if (isDownloadSessionActive(sessionId)) {
-                            setTransferDetail("Download failed; retrying ${item.fileName}...")
-                        }
-                    }
+            val url = "http://$deviceIp/files/${item.fileName}"
+            val startedAtMs = System.currentTimeMillis()
+            withContext(Dispatchers.Main) {
+                if (isDownloadSessionActive(sessionId)) {
+                    val (done, total) = vendorTypeProgress(item.type)
+                    setTransferDetail("Downloading ${item.type.progressLabel} ${done + 1}/$total with HeyCyan downloader...")
                 }
             }
-
-            if (!imported) {
-                withContext(Dispatchers.Main) {
-                    if (isDownloadSessionActive(sessionId)) {
-                        showDownloadError(
-                            "HeyCyan flow stopped after repeated media download failures. Please retry sync."
-                        )
-                    }
-                }
-                return
+            Log.i("DataDownload", "HeyCyan queue downloading ${item.fileName}: $url")
+            val result = downloader.download(url, item.fileName) { downloaded, total ->
+                maybeReportFileProgress(sessionId, item.type.progressLabel, item.fileName, downloaded, total, startedAtMs)
+            }
+            if (result.isSuccess) {
+                val file = result.file
+                val byteCount = file?.length() ?: 0L
+                val imported = file != null && importVendorMediaFile(file, item)
+                file?.delete()
+                recordHeyCyanTransferResult(
+                    item.fileName,
+                    item.type.toHeyCyanMediaType(),
+                    success = imported,
+                    byteCount = byteCount,
+                    failureReason = "Downloaded file could not be imported",
+                )
+            } else {
+                recordHeyCyanTransferResult(
+                    item.fileName,
+                    item.type.toHeyCyanMediaType(),
+                    success = false,
+                    byteCount = 0L,
+                    failureReason = result.errorDetail ?: "HTTP ${result.errorCode}",
+                )
             }
 
             withContext(Dispatchers.Main) {
@@ -9528,13 +10220,17 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                         VendorMediaType.AUDIO -> "opus"
                     }
                 )
-                setTransferDetail("Downloaded ${transferItemSummary()}")
+                setTransferDetail("Attempted ${transferItemSummary()}")
             }
         }
 
         withContext(Dispatchers.Main) {
             if (isDownloadSessionActive(sessionId)) {
-                showDownloadSuccess("All ${files.size} files downloaded successfully!")
+                if (heyCyanTransferLedger?.isComplete == true) {
+                    showDownloadSuccess("All ${files.size} files downloaded successfully!")
+                } else {
+                    showDownloadError("HeyCyan sync has unresolved files: ${heyCyanTransferLedger?.failureSummary().orEmpty()}")
+                }
             }
         }
     }
@@ -9545,6 +10241,12 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             VendorMediaType.VIDEO -> transferDoneMp4 to transferTotalMp4
             VendorMediaType.AUDIO -> transferDoneOpus to transferTotalOpus
         }
+    }
+
+    private fun VendorMediaType.toHeyCyanMediaType(): HeyCyanMediaType = when (this) {
+        VendorMediaType.PHOTO -> HeyCyanMediaType.PHOTO
+        VendorMediaType.VIDEO -> HeyCyanMediaType.VIDEO
+        VendorMediaType.AUDIO -> HeyCyanMediaType.AUDIO
     }
 
     private suspend fun importVendorMediaFile(file: File, item: VendorMediaItem): Boolean {
@@ -9773,10 +10475,12 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             
             withContext(Dispatchers.Main) {
                 if (!isDownloadSessionActive(sessionId)) return@withContext
-                if (totalFail == 0) {
+                if (totalFail == 0 && heyCyanTransferLedger?.isComplete == true) {
                     showDownloadSuccess("All $totalSuccess files downloaded successfully!")
                 } else {
-                    showDownloadError("Download completed with errors: $totalSuccess successful, $totalFail failed")
+                    showDownloadError(
+                        "Download completed with unresolved files: ${heyCyanTransferLedger?.failureSummary().orEmpty()}",
+                    )
                 }
             }
     }
@@ -9806,7 +10510,14 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             if (savedResult != null && savedResult.bytes > 0) {
                 Log.i("DataDownload", "File downloaded: $fileName (${savedResult.bytes} bytes)")
             }
-            if (savedResult?.success == true) {
+            val success = savedResult?.success == true
+            recordHeyCyanTransferResult(
+                fileName,
+                HeyCyanMediaType.PHOTO,
+                success = success,
+                byteCount = savedResult?.bytes ?: 0L,
+            )
+            if (success) {
                 Log.i("DataDownload", "Saved to gallery: name=$fileName uri=${savedResult.uri}")
                 true
             } else {
@@ -9815,6 +10526,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             }
         } catch (e: Exception) {
             if (e is CancellationException) throw e
+            recordHeyCyanTransferResult(fileName, HeyCyanMediaType.PHOTO, false, 0L, e.message.orEmpty())
             Log.e("DataDownload", "Error downloading $fileName: ${e.message}", e)
             false
         }
@@ -9845,7 +10557,14 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             if (savedResult != null && savedResult.bytes > 0) {
                 Log.i("DataDownload", "File downloaded: $fileName (${savedResult.bytes} bytes)")
             }
-            if (savedResult?.success == true) {
+            val success = savedResult?.success == true
+            recordHeyCyanTransferResult(
+                fileName,
+                HeyCyanMediaType.VIDEO,
+                success = success,
+                byteCount = savedResult?.bytes ?: 0L,
+            )
+            if (success) {
                 Log.i("DataDownload", "Saved to gallery: name=$fileName uri=${savedResult.uri}")
                 true
             } else {
@@ -9854,6 +10573,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             }
         } catch (e: Exception) {
             if (e is CancellationException) throw e
+            recordHeyCyanTransferResult(fileName, HeyCyanMediaType.VIDEO, false, 0L, e.message.orEmpty())
             Log.e("DataDownload", "Error downloading $fileName: ${e.message}", e)
             false
         }
@@ -9888,7 +10608,14 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             if (savedResult != null && savedResult.bytes > 0) {
                 Log.i("DataDownload", "File downloaded: $fileName (${savedResult.bytes} bytes)")
             }
-            if (savedResult?.success == true) {
+            val success = savedResult?.success == true
+            recordHeyCyanTransferResult(
+                fileName,
+                HeyCyanMediaType.AUDIO,
+                success = success,
+                byteCount = savedResult?.bytes ?: rawBytesSize.toLong(),
+            )
+            if (success) {
                 payloadBytes?.let { bytes ->
                     runCatching {
                         val persisted = GlassesSyncedAudioIngestor.persistDownloadedAudio(
@@ -9915,6 +10642,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             }
         } catch (e: Exception) {
             if (e is CancellationException) throw e
+            recordHeyCyanTransferResult(fileName, HeyCyanMediaType.AUDIO, false, 0L, e.message.orEmpty())
             Log.e("DataDownload", "Error downloading $fileName: ${e.message}", e)
             false
         }
@@ -10413,17 +11141,56 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private fun sendExitTransferModeIfRequested() {
         if (!downloadExitTransferRequested) return
         downloadExitTransferRequested = false
+        downloadExitTransferResponsePending = true
+        downloadExitTransferTimedOut = false
+        setHeyCyanMediaSyncStage(
+            HeyCyanMediaSyncStage.EXITING_TRANSFER_MODE,
+            "Asking the glasses to exit transfer mode.",
+        )
+        downloadExitTransferTimeoutJob?.cancel()
+        downloadExitTransferTimeoutJob = glassesTeardownScope.launch {
+            delay(TRANSFER_MODE_COMMAND_TIMEOUT_MS)
+            if (!downloadExitTransferResponsePending) return@launch
+            downloadExitTransferResponsePending = false
+            downloadExitTransferTimedOut = true
+            mediaSyncQuarantined = true
+            mediaSyncQuarantineReason = "The glasses did not acknowledge exit from transfer mode."
+            setHeyCyanMediaSyncStage(HeyCyanMediaSyncStage.FAILED, mediaSyncQuarantineReason!!)
+            pendingDownloadTeardownFinish?.invoke(false)
+            pendingDownloadTeardownFinish = null
+        }
         // Tell the glasses to exit transfer mode (official app does this after downloads finish).
         try {
             LargeDataHandler.getInstance().glassesControl(
                 byteArrayOf(0x02, 0x01, 0x09)
             ) { _, resp ->
+                if (!downloadExitTransferResponsePending) return@glassesControl
+                downloadExitTransferResponsePending = false
+                downloadExitTransferTimeoutJob?.cancel()
+                downloadExitTransferTimeoutJob = null
+                if (resp.errorCode != 0) {
+                    downloadExitTransferTimedOut = true
+                    mediaSyncQuarantined = true
+                    mediaSyncQuarantineReason = "The glasses rejected exit from transfer mode."
+                    setHeyCyanMediaSyncStage(HeyCyanMediaSyncStage.FAILED, mediaSyncQuarantineReason!!)
+                    pendingDownloadTeardownFinish?.invoke(false)
+                } else {
+                    pendingDownloadTeardownFinish?.invoke(true)
+                }
+                pendingDownloadTeardownFinish = null
                 Log.i(
                     "DataDownload",
                     "glassesControl[0x02,0x01,0x09] -> dataType=${resp.dataType}, error=${resp.errorCode}",
                 )
             }
         } catch (e: Exception) {
+            downloadExitTransferResponsePending = false
+            downloadExitTransferTimedOut = true
+            mediaSyncQuarantined = true
+            mediaSyncQuarantineReason = "Could not send the transfer-exit command."
+            setHeyCyanMediaSyncStage(HeyCyanMediaSyncStage.FAILED, mediaSyncQuarantineReason!!)
+            pendingDownloadTeardownFinish?.invoke(false)
+            pendingDownloadTeardownFinish = null
             Log.w("DataDownload", "Failed to send exit-transfer command [0x02,0x01,0x09]", e)
         }
     }
@@ -10440,6 +11207,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         }
 
         Log.i("DataDownload", "Bluetooth disconnected; abandoning media-sync P2P resources")
+        recordHeyCyanSyncDiagnostic("teardown_abandoned_for_ble_disconnect")
         downloadCancelledByUser = true
         downloadAttemptJob?.cancel()
         downloadAttemptJob = null
@@ -10470,6 +11238,13 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         downloadResolvedHttpIp = null
         downloadP2pTeardownInProgress = false
         downloadExitTransferRequested = false
+        downloadExitTransferTimeoutJob?.cancel()
+        downloadExitTransferTimeoutJob = null
+        downloadExitTransferResponsePending = false
+        downloadExitTransferTimedOut = false
+        pendingDownloadTeardownFinish = null
+        mediaSyncQuarantined = false
+        mediaSyncQuarantineReason = null
         releaseExclusiveGlassesSession(lease)
         setTransferUiVisible(false)
         resetTransferUiState()
@@ -10482,6 +11257,14 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         onTeardownComplete: (() -> Unit)? = null,
     ) {
         val teardownLease = mediaSessionLease
+        recordHeyCyanSyncDiagnostic(
+            "teardown_started",
+            mapOf("exit_requested" to sendExitTransfer.toString()),
+        )
+        setHeyCyanMediaSyncStage(
+            HeyCyanMediaSyncStage.TEARING_DOWN,
+            "Releasing Wi-Fi Direct and transfer resources.",
+        )
         if (sendExitTransfer) {
             downloadExitTransferRequested = true
         }
@@ -10529,7 +11312,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         manager?.stopP2pOperations()
         manager?.cancelP2pConnection()
 
-        val finishTeardown = {
+        val finishTeardown: (Boolean) -> Unit = { releaseLease ->
             manager?.unregisterReceiver()
             downloadWifiP2pManager = null
             downloadWifiP2pCallback = null
@@ -10538,15 +11321,33 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             downloadP2pNetwork = null
             downloadResolvedHttpIp = null
             downloadP2pTeardownInProgress = false
-            if (releaseExclusiveSession) {
+            if (releaseLease && releaseExclusiveSession) {
                 releaseExclusiveGlassesSession(teardownLease)
             }
-            onTeardownComplete?.invoke()
+            recordHeyCyanSyncDiagnostic(
+                "teardown_finished",
+                mapOf(
+                    "confirmed" to releaseLease.toString(),
+                    "exit_timed_out" to downloadExitTransferTimedOut.toString(),
+                    "lease_released" to (releaseLease && releaseExclusiveSession).toString(),
+                ),
+            )
+            if (releaseLease) {
+                onTeardownComplete?.invoke()
+            }
             Unit
         }
 
+        val finishAfterTransferExit = {
+            if (downloadExitTransferResponsePending) {
+                pendingDownloadTeardownFinish = finishTeardown
+            } else {
+                finishTeardown(!downloadExitTransferTimedOut)
+            }
+        }
+
         if (manager == null) {
-            finishTeardown()
+            finishAfterTransferExit()
             return
         }
 
@@ -10554,7 +11355,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         removeDownloadP2pGroup(
             manager = manager,
             attempt = 1,
-            onRemoved = finishTeardown,
+            onRemoved = finishAfterTransferExit,
         )
     }
 
@@ -10621,6 +11422,13 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                         "DataDownload",
                         "P2P teardown could not be confirmed; keeping the media-sync lease quarantined until Bluetooth reconnect",
                     )
+                    mediaSyncQuarantined = true
+                    mediaSyncQuarantineReason = "Wi-Fi Direct teardown could not be confirmed. Reconnect the glasses before syncing again."
+                    recordHeyCyanSyncDiagnostic(
+                        "teardown_unconfirmed",
+                        mapOf("attempt" to attempt.toString(), "p2p_available" to manager.canUseP2p().toString()),
+                    )
+                    setHeyCyanMediaSyncStage(HeyCyanMediaSyncStage.FAILED, mediaSyncQuarantineReason!!)
                 } else {
                     Log.w("DataDownload", "P2P group still present after teardown attempt $attempt; retaining the media-sync lease and retrying")
                     scheduleDownloadP2pRemovalRetry(manager, attempt + 1, onDisconnected)
@@ -10642,10 +11450,11 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         }
     }
 
-    private fun cleanupP2pAfterDownload() {
+    private fun cleanupP2pAfterDownload(onTeardownComplete: (() -> Unit)? = null) {
         teardownDownloadP2pSession(
             sendExitTransfer = true,
             hideTransferUi = true,
+            onTeardownComplete = onTeardownComplete,
         )
     }
 
@@ -10657,6 +11466,8 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             dismissButtonLabel = "Close",
         )
         downloadCancelledByUser = true
+        heyCyanSyncTerminalResult = HeyCyanSyncTerminalResult.CANCELLED
+        closeActiveDownloadHttpWork()
         finishDownloadInitialPhase("cancelled by user")
         setTransferDetail("Stopping sync...")
         if (downloadP2pTeardownInProgress) {
@@ -10674,9 +11485,35 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         }
     }
 
+    private fun completeHeyCyanSyncAfterConfirmedTeardown(message: String) {
+        setHeyCyanMediaSyncStage(
+            HeyCyanMediaSyncStage.VERIFYING,
+            "Refreshing glasses media counts after confirmed cleanup.",
+        )
+        requestHeyCyanMediaCountsForSync { afterCounts ->
+            if (afterCounts != null) {
+                updateHeyCyanMediaInventory(afterCounts)
+            }
+            persistHeyCyanSyncCountEvidence(afterCounts)
+            val detail = if (afterCounts == null) {
+                "$message Media counts could not be refreshed; storage availability is unchanged."
+            } else {
+                message
+            }
+            setHeyCyanMediaSyncStage(HeyCyanMediaSyncStage.COMPLETED, detail)
+        }
+    }
+
     private fun showDownloadSuccess(message: String) {
         finishDownloadInitialPhase("download completed")
-        cleanupP2pAfterDownload()
+        heyCyanSyncTerminalResult = HeyCyanSyncTerminalResult.COMPLETE
+        setHeyCyanMediaSyncStage(
+            HeyCyanMediaSyncStage.VERIFYING,
+            "Verifying downloaded media before cleanup.",
+        )
+        cleanupP2pAfterDownload {
+            completeHeyCyanSyncAfterConfirmedTeardown(message)
+        }
         Log.i("DataDownload", "SUCCESS: $message (flow=${downloadFlowMode.label})")
         Toast.makeText(this, message, Toast.LENGTH_LONG).show()
     }
@@ -10686,6 +11523,14 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             finishHighQualityImageFailure(message)
             return
         }
+        heyCyanTransferLedger?.failUnresolved(message)
+        persistHeyCyanTransferLedger()
+        heyCyanSyncTerminalResult = if (heyCyanTransferLedger == null) {
+            HeyCyanSyncTerminalResult.FAILED_BEFORE_MANIFEST
+        } else {
+            HeyCyanSyncTerminalResult.COMPLETED_WITH_FAILED_FILES
+        }
+        persistHeyCyanTransferLedger()
         if (!downloadInitialPhaseCompleted) {
             maybeShowP2pSyncLogHelp(
                 reason = "CyanBridge failed during the initial P2P sync steps before any media transfer progress was shown. Error: $message",
@@ -10693,7 +11538,15 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         }
         finishDownloadInitialPhase("error: $message")
         if (cleanup) {
-            cleanupP2pAfterDownload()
+            mediaSyncQuarantined = true
+            mediaSyncQuarantineReason = message
+            cleanupP2pAfterDownload {
+                mediaSyncQuarantined = false
+                mediaSyncQuarantineReason = null
+                setHeyCyanMediaSyncStage(HeyCyanMediaSyncStage.FAILED, message)
+            }
+        } else {
+            setHeyCyanMediaSyncStage(HeyCyanMediaSyncStage.FAILED, message)
         }
         Log.e("DataDownload", "ERROR: $message (flow=${downloadFlowMode.label})")
         Toast.makeText(this, message, Toast.LENGTH_LONG).show()
@@ -10892,12 +11745,19 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             return
         }
         lastDownloadBleIpAtMs = now
+        recordHeyCyanSyncDiagnostic("glasses_ip_reported", mapOf("source" to "ble_0x08"))
         Log.i("DataDownload", "BLE reported device WiFi IP: $ip")
         markTransferModeEvidence("BLE 0x08 IP")
         downloadBleIp = ip
         if (downloadFlowMode == GlassesSyncFlow.OFFICIAL_HEYCYAN) {
             officialBleCallbackSuccess = true
             Log.i("DataDownload", "Official flow BLE readiness satisfied")
+        }
+        if (!downloadP2pConnected) {
+            setHeyCyanMediaSyncStage(
+                HeyCyanMediaSyncStage.WAITING_FOR_P2P,
+                "Glasses IP received; waiting for Wi-Fi Direct.",
+            )
         }
 
         // If we're stuck scanning/probing without a good route, restart the resolver now that
@@ -10915,6 +11775,10 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         downloadP2pConnected = info.groupFormed
         downloadWifiIp = info.groupOwnerAddress?.hostAddress
         downloadPhoneIsGroupOwner = info.isGroupOwner
+        recordHeyCyanSyncDiagnostic(
+            "p2p_group_changed",
+            mapOf("group_formed" to info.groupFormed.toString(), "phone_is_group_owner" to info.isGroupOwner.toString()),
+        )
         if (downloadFlowMode == GlassesSyncFlow.OFFICIAL_HEYCYAN) {
             officialSystemSuccess = info.groupFormed
             officialDisconnectRecoveryJob?.cancel()
@@ -10934,6 +11798,10 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         Log.i(
             "DataDownload",
             "onDownloadP2pConnected: flow=${downloadFlowMode.label}, p2pConnected=$downloadP2pConnected, isGroupOwner=${info.isGroupOwner}, groupOwnerIp=$downloadWifiIp"
+        )
+        setHeyCyanMediaSyncStage(
+            HeyCyanMediaSyncStage.WAITING_FOR_GLASSES_IP,
+            "Wi-Fi Direct connected; waiting for the glasses IP.",
         )
         maybeStartHttpDownload("P2P")
     }
@@ -10979,6 +11847,10 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         val bleIp = downloadBleIp
         if (!officialBleCallbackSuccess || bleIp.isNullOrBlank()) {
             setTransferDetail("Waiting for BLE-reported glasses IP...")
+            setHeyCyanMediaSyncStage(
+                HeyCyanMediaSyncStage.WAITING_FOR_GLASSES_IP,
+                "Waiting for the BLE-reported glasses IP.",
+            )
             Log.i(
                 "DataDownload",
                 "Ignoring HTTP start trigger from $source; HeyCyan flow is waiting for BLE 0x08 IP notify"
@@ -11024,6 +11896,10 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         val hasDeviceIp = !downloadBleIp.isNullOrBlank() || !bleIpBridge.ip.value.isNullOrBlank()
         if (!hasDeviceIp) {
             setTransferDetail("Waiting for BLE-reported glasses IP...")
+            setHeyCyanMediaSyncStage(
+                HeyCyanMediaSyncStage.WAITING_FOR_GLASSES_IP,
+                "Waiting for the BLE-reported glasses IP.",
+            )
             Log.i("DataDownload", "Ignoring HTTP start trigger from $source; waiting for device IP notify")
             return
         }
@@ -11212,16 +12088,18 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         if (downloadFlowMode == GlassesSyncFlow.OFFICIAL_HEYCYAN) {
             return try {
                 val conn = openPlainHttpConnection(url) ?: return false
-                conn.requestMethod = "GET"
-                conn.connectTimeout = connectTimeoutMs
-                conn.readTimeout = readTimeoutMs
-                if (conn.responseCode == HttpURLConnection.HTTP_OK) {
-                    onStream?.invoke(conn.inputStream, conn.contentLengthLong)
+                activeDownloadHttpConnection.set(conn)
+                try {
+                    conn.requestMethod = "GET"
+                    conn.connectTimeout = connectTimeoutMs
+                    conn.readTimeout = readTimeoutMs
+                    if (conn.responseCode == HttpURLConnection.HTTP_OK) {
+                        consumeDownloadHttpStream(conn, conn.inputStream, conn.contentLengthLong, onStream)
+                        true
+                    } else false
+                } finally {
+                    activeDownloadHttpConnection.compareAndSet(conn, null)
                     conn.disconnect()
-                    true
-                } else {
-                    conn.disconnect()
-                    false
                 }
             } catch (e: Exception) {
                 Log.w("DataDownload", "Official flow plain httpGet failed for $url: ${e.message}")
@@ -11231,15 +12109,19 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
         try {
             val conn = openHttpConnection(url) ?: return false
-            conn.requestMethod = "GET"
-            conn.connectTimeout = connectTimeoutMs
-            conn.readTimeout = readTimeoutMs
-            if (conn.responseCode == HttpURLConnection.HTTP_OK) {
-                onStream?.invoke(conn.inputStream, conn.contentLengthLong)
+            activeDownloadHttpConnection.set(conn)
+            try {
+                conn.requestMethod = "GET"
+                conn.connectTimeout = connectTimeoutMs
+                conn.readTimeout = readTimeoutMs
+                if (conn.responseCode == HttpURLConnection.HTTP_OK) {
+                    consumeDownloadHttpStream(conn, conn.inputStream, conn.contentLengthLong, onStream)
+                    return true
+                }
+            } finally {
+                activeDownloadHttpConnection.compareAndSet(conn, null)
                 conn.disconnect()
-                return true
             }
-            conn.disconnect()
         } catch (e: Exception) {
             Log.w("DataDownload", "httpGet default path failed for $url: ${e.message}")
         }
@@ -11419,9 +12301,9 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         if (resetDeviceP2p) {
             WifiP2pManagerSingleton.getInstance(this).resetDeviceP2p()
         }
-        teardownDownloadP2pSession(
+        quarantineHeyCyanMediaSync(
+            reason = message,
             sendExitTransfer = false,
-            hideTransferUi = true,
         )
         Toast.makeText(this, "$message Please retry sync.", Toast.LENGTH_LONG).show()
     }
@@ -11456,6 +12338,11 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                 0x02 -> {
                     if (WalkingAidImageCapture.isAwaitingPhotoReady()) {
                         Log.i("DeviceNotify", "Walking Aid consumed its requested photo-ready notification")
+                        return
+                    }
+                    pendingHeyCyanPreviewPhotoReady.get()?.let { previewCapture ->
+                        Log.i("CaptureTrace", "Preview capture observed photo-ready notification")
+                        previewCapture.complete(Unit)
                         return
                     }
                     val appRequestedCapture = imageCaptureAwaitingNotification.get()

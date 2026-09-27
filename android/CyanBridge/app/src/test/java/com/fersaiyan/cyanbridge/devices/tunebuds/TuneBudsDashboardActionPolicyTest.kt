@@ -21,6 +21,7 @@ class TuneBudsDashboardActionPolicyTest {
             GlassesDashboardAction.StartAudioRecording,
             GlassesDashboardAction.RequestMediaCount,
             GlassesDashboardAction.StartSync,
+            GlassesDashboardAction.RetryHeyCyanUnresolvedFiles,
             GlassesDashboardAction.StopSync,
             GlassesDashboardAction.ToggleAdvanced,
             GlassesDashboardAction.StartAgent,

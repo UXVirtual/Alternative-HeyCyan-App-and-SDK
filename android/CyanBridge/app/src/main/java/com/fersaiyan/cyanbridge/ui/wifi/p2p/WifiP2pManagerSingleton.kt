@@ -20,6 +20,8 @@ import com.heycyan.core.connectivity.p2p.WifiP2pConnectionState
 import com.heycyan.core.connectivity.p2p.WifiP2pRetryState
 import com.oudmon.ble.base.communication.LargeDataHandler
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 
 class WifiP2pManagerSingleton private constructor(private val context: Context) {
 
@@ -345,6 +347,49 @@ class WifiP2pManagerSingleton private constructor(private val context: Context) 
                     this@WifiP2pManagerSingleton.onConnectionInfoAvailable(info)
                 }
             })
+        }
+    }
+
+    /**
+     * Reports whether Android still has a P2P connection or group. A caller
+     * must treat a missing callback as unknown rather than as a clean state.
+     */
+    @SuppressLint("MissingPermission")
+    fun queryGroupFormed(onResult: (Boolean?) -> Unit) {
+        if (!hasWifiP2pPermission()) {
+            onResult(null)
+            return
+        }
+        val channel = wifiP2pChannel
+        if (channel == null) {
+            onResult(null)
+            return
+        }
+
+        var connectionFormed = false
+        var groupPresent = false
+        val remaining = AtomicInteger(2)
+        val delivered = AtomicBoolean(false)
+        val deliver: (Boolean?) -> Unit = { value ->
+            if (delivered.compareAndSet(false, true)) onResult(value)
+        }
+        val finish = {
+            if (remaining.decrementAndGet() == 0) {
+                deliver(connectionFormed || groupPresent)
+            }
+        }
+        try {
+            wifiP2pManager.requestConnectionInfo(channel) { info ->
+                connectionFormed = info.groupFormed
+                finish()
+            }
+            wifiP2pManager.requestGroupInfo(channel) { group ->
+                groupPresent = group != null
+                finish()
+            }
+        } catch (error: Exception) {
+            Log.w(TAG, "Could not query existing P2P group", error)
+            deliver(null)
         }
     }
 

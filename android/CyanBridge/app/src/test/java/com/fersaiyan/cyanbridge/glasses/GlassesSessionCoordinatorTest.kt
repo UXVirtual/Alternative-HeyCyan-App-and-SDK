@@ -86,4 +86,17 @@ class GlassesSessionCoordinatorTest {
 
         assertTrue(GlassesSessionCoordinator.isBackgroundCommandActive(currentPermit))
     }
+
+    @Test
+    fun mediaSyncLeaseRemainsExclusiveUntilConfirmedTeardownOrBleReconnect() {
+        val lease = requireNotNull(GlassesSessionCoordinator.tryAcquireLease(GlassesSession.MEDIA_SYNC))
+
+        assertFalse(GlassesSessionCoordinator.tryAcquire(GlassesSession.LIVE_PREVIEW))
+        assertNull(GlassesSessionCoordinator.tryAcquireLease(GlassesSession.MEDIA_SYNC))
+        assertTrue(GlassesSessionCoordinator.isActive(lease))
+
+        GlassesSessionCoordinator.clearForDisconnectedDevice()
+
+        assertTrue(GlassesSessionCoordinator.tryAcquire(GlassesSession.LIVE_PREVIEW))
+    }
 }

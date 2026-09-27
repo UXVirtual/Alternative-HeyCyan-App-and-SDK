@@ -1,9 +1,18 @@
 package com.fersaiyan.cyanbridge.ai.live
 
 import org.junit.Assert.assertArrayEquals
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertNotNull
 import org.junit.Test
 
 class GeminiLiveGlassesImageCaptureTest {
+
+    @Test
+    fun thumbnailPermissionRequiresPhotoCountIncrease() {
+        assertNull(GeminiLiveGlassesImageCapture.PersistedPhoto.fromPhotoCountIncrease(2, 2))
+        assertNull(GeminiLiveGlassesImageCapture.PersistedPhoto.fromPhotoCountIncrease(2, 1))
+        assertNotNull(GeminiLiveGlassesImageCapture.PersistedPhoto.fromPhotoCountIncrease(2, 3))
+    }
 
     @Test
     fun reassembleFragments_skipsPrefixAndDuplicateBlocks() {

@@ -15,6 +15,14 @@ import com.fersaiyan.cyanbridge.shared.glasses.FirmwarePatchRequestUiState
 import com.fersaiyan.cyanbridge.shared.glasses.AiWakeWordRoute
 import com.fersaiyan.cyanbridge.shared.glasses.GlassesDashboardAction
 import com.fersaiyan.cyanbridge.shared.glasses.GlassesDashboardUiState
+import com.fersaiyan.cyanbridge.shared.glasses.HeyCyanCaptureAvailability
+import com.fersaiyan.cyanbridge.shared.glasses.HeyCyanCaptureUiState
+import com.fersaiyan.cyanbridge.shared.glasses.HeyCyanMediaCapacityUiState
+import com.fersaiyan.cyanbridge.shared.glasses.HeyCyanMediaInventoryUiState
+import com.fersaiyan.cyanbridge.shared.glasses.HeyCyanMediaSyncStage
+import com.fersaiyan.cyanbridge.shared.glasses.HeyCyanMediaSyncSummaryUiState
+import com.fersaiyan.cyanbridge.shared.glasses.HeyCyanMediaTypeCounts
+import com.fersaiyan.cyanbridge.shared.glasses.HeyCyanMediaUiState
 import com.fersaiyan.cyanbridge.shared.glasses.OtaFirmwareSource
 import com.fersaiyan.cyanbridge.shared.glasses.MetaRaybanUiState
 import com.fersaiyan.cyanbridge.shared.glasses.WifiAdbDebugUiState
@@ -149,8 +157,13 @@ class GlassesDashboardScreenTest {
         composeRule.onNodeWithText("Photo").assertIsDisplayed()
         composeRule.onNodeWithText("Video").assertIsDisplayed()
         composeRule.onNodeWithText("Audio").assertIsDisplayed()
-        composeRule.onNodeWithText("Count").assertIsDisplayed()
-        composeRule.onNodeWithText("Sync data (P2P)").assertIsDisplayed()
+        composeRule.onNodeWithTag("heycyan_media_status").assertIsDisplayed()
+        composeRule.onNodeWithText("Photos: --").assertIsDisplayed()
+        composeRule.onNodeWithText("Videos: --").assertIsDisplayed()
+        composeRule.onNodeWithText("Audio: --").assertIsDisplayed()
+        composeRule.onNodeWithText("Remaining media slots: Unknown").assertIsDisplayed()
+        composeRule.onNodeWithTag("heycyan_media_refresh").assertIsDisplayed()
+        composeRule.onNodeWithTag("heycyan_media_sync").assertIsDisplayed()
         composeRule.onNodeWithText("Test voice").assertIsDisplayed()
         composeRule.onNodeWithText("Test image AI description").assertIsDisplayed()
         composeRule.onNodeWithText("Capture + Preview").assertIsDisplayed()
@@ -158,6 +171,125 @@ class GlassesDashboardScreenTest {
         composeRule.onNodeWithText("Save full res").assertIsDisplayed()
         composeRule.onNodeWithText("Show advanced controls").assertIsDisplayed()
         composeRule.onAllNodesWithText("Meeting capture").assertCountEquals(0)
+    }
+
+    @Test
+    fun heyCyanStorageFullBlocksOnlyCaptureAndPreviewWhileSyncRemainsAvailable() {
+        var action: GlassesDashboardAction? = null
+        composeRule.setContent {
+            CyanBridgeTheme {
+                GlassesDashboardScreen(
+                    state = GlassesDashboardUiState(
+                        showHeyCyanControls = true,
+                        heyCyanMedia = HeyCyanMediaUiState(
+                            inventory = HeyCyanMediaInventoryUiState(photos = 2, videos = 1, audio = 1),
+                            capacity = HeyCyanMediaCapacityUiState.Known(remainingMediaSlots = 0),
+                            capture = HeyCyanCaptureUiState(
+                                availability = HeyCyanCaptureAvailability.BLOCKED_STORAGE_FULL,
+                            ),
+                        ),
+                    ),
+                    onAction = { action = it },
+                )
+            }
+        }
+
+        composeRule.onNodeWithText("Photos: 2").assertIsDisplayed()
+        composeRule.onNodeWithText("Videos: 1").assertIsDisplayed()
+        composeRule.onNodeWithText("Audio: 1").assertIsDisplayed()
+        composeRule.onNodeWithText("Remaining media slots: 0").assertIsDisplayed()
+        composeRule.onNodeWithText("Storage full. Sync images to continue.").assertIsDisplayed()
+        composeRule.onNodeWithTag("heycyan_capture_and_preview").assertIsNotEnabled()
+        composeRule.onNodeWithTag("heycyan_preview_last").assertIsEnabled()
+        composeRule.onNodeWithTag("heycyan_media_sync").assertIsEnabled().performClick()
+        composeRule.runOnIdle { assertEquals(GlassesDashboardAction.StartSync, action) }
+
+        composeRule.onNodeWithTag("heycyan_media_refresh").performClick()
+        composeRule.runOnIdle { assertEquals(GlassesDashboardAction.RequestMediaCount, action) }
+    }
+
+    @Test
+    fun heyCyanSyncFailureStageRemainsVisibleOutsideGenericTransferProgress() {
+        composeRule.setContent {
+            CyanBridgeTheme {
+                GlassesDashboardScreen(
+                    state = GlassesDashboardUiState(
+                        showHeyCyanControls = true,
+                        heyCyanMedia = HeyCyanMediaUiState(
+                            sync = com.fersaiyan.cyanbridge.shared.glasses.HeyCyanMediaSyncUiState(
+                                stage = HeyCyanMediaSyncStage.FAILED,
+                                detail = "P2P teardown was not confirmed",
+                            ),
+                        ),
+                    ),
+                    onAction = {},
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag("heycyan_media_sync_stage").assertIsDisplayed()
+        composeRule.onNodeWithText("Failed: P2P teardown was not confirmed").assertIsDisplayed()
+    }
+
+    @Test
+    fun heyCyanPartialSyncShowsTypedSummaryAndRetriesOnlyUnresolvedFiles() {
+        var action: GlassesDashboardAction? = null
+        composeRule.setContent {
+            CyanBridgeTheme {
+                GlassesDashboardScreen(
+                    state = GlassesDashboardUiState(
+                        showHeyCyanControls = true,
+                        heyCyanMedia = HeyCyanMediaUiState(
+                            sync = com.fersaiyan.cyanbridge.shared.glasses.HeyCyanMediaSyncUiState(
+                                stage = HeyCyanMediaSyncStage.FAILED,
+                                detail = "One or more files could not be transferred",
+                            ),
+                            syncSummary = HeyCyanMediaSyncSummaryUiState(
+                                planned = HeyCyanMediaTypeCounts(photos = 2, videos = 1, audio = 1),
+                                completed = HeyCyanMediaTypeCounts(photos = 1, videos = 1),
+                                failed = HeyCyanMediaTypeCounts(photos = 1, audio = 1),
+                                canRetryUnresolvedFiles = true,
+                            ),
+                        ),
+                    ),
+                    onAction = { action = it },
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag("heycyan_media_sync_summary").assertIsDisplayed()
+        composeRule.onNodeWithText("Planned - Photos: 2, Videos: 1, Audio: 1").assertIsDisplayed()
+        composeRule.onNodeWithText("Completed - Photos: 1, Videos: 1, Audio: 0").assertIsDisplayed()
+        composeRule.onNodeWithText("Failed - Photos: 1, Videos: 0, Audio: 1").assertIsDisplayed()
+        composeRule.onNodeWithTag("heycyan_media_retry_unresolved").performClick()
+        composeRule.runOnIdle {
+            assertEquals(GlassesDashboardAction.RetryHeyCyanUnresolvedFiles, action)
+        }
+    }
+
+    @Test
+    fun heyCyanStuckVisibleSyncOffersStopWithoutClaimingCompletion() {
+        var action: GlassesDashboardAction? = null
+        composeRule.setContent {
+            CyanBridgeTheme {
+                GlassesDashboardScreen(
+                    state = GlassesDashboardUiState(
+                        showHeyCyanControls = true,
+                        heyCyanMedia = HeyCyanMediaUiState(
+                            sync = com.fersaiyan.cyanbridge.shared.glasses.HeyCyanMediaSyncUiState(
+                                stage = HeyCyanMediaSyncStage.TEARING_DOWN,
+                                detail = "Waiting for Wi-Fi Direct cleanup",
+                            ),
+                        ),
+                    ),
+                    onAction = { action = it },
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag("heycyan_media_stop_sync").assertIsDisplayed().performClick()
+        composeRule.onAllNodesWithText("Completed:").assertCountEquals(0)
+        composeRule.runOnIdle { assertEquals(GlassesDashboardAction.StopSync, action) }
     }
 
     @Test

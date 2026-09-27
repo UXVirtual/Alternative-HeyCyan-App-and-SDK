@@ -55,6 +55,9 @@ import com.fersaiyan.cyanbridge.shared.glasses.GlassesAssistantMode
 import com.fersaiyan.cyanbridge.shared.glasses.AiWakeWordRoute
 import com.fersaiyan.cyanbridge.shared.glasses.GlassesDashboardAction
 import com.fersaiyan.cyanbridge.shared.glasses.GlassesDashboardUiState
+import com.fersaiyan.cyanbridge.shared.glasses.HeyCyanCaptureAvailability
+import com.fersaiyan.cyanbridge.shared.glasses.HeyCyanMediaCapacityUiState
+import com.fersaiyan.cyanbridge.shared.glasses.HeyCyanMediaSyncStage
 import com.fersaiyan.cyanbridge.shared.glasses.FirmwarePatchRequestUiState
 import com.fersaiyan.cyanbridge.shared.plugins.NativePluginShortcutAction
 import com.fersaiyan.cyanbridge.shared.plugins.NativePluginShortcutUiState
@@ -515,6 +518,10 @@ private fun CoreGlassesControls(
             WearingDetectionControl(state, onAction)
             Spacer(Modifier.height(8.dp))
         }
+        if (state.showHeyCyanControls) {
+            HeyCyanMediaStatusSection(state, onAction)
+            Spacer(Modifier.height(8.dp))
+        }
         SectionTitle(stringResource(Res.string.dashboard_media_controls))
         ActionRow(
             primaryLabel = stringResource(Res.string.dashboard_photo),
@@ -526,17 +533,25 @@ private fun CoreGlassesControls(
             },
             onSecondary = { onAction(GlassesDashboardAction.ToggleVideo) },
         )
-        ActionRow(
-            primaryLabel = if (state.showTuneBudsControls && state.isAudioRecording) {
-                stringResource(Res.string.dashboard_stop)
-            } else {
-                stringResource(Res.string.dashboard_audio)
-            },
-            onPrimary = { onAction(GlassesDashboardAction.StartAudioRecording) },
-            secondaryLabel = stringResource(Res.string.dashboard_count),
-            onSecondary = { onAction(GlassesDashboardAction.RequestMediaCount) },
-        )
-        if (state.showMediaSync) {
+        if (state.showHeyCyanControls) {
+            ActionButton(
+                label = stringResource(Res.string.dashboard_audio),
+                onClick = { onAction(GlassesDashboardAction.StartAudioRecording) },
+                modifier = Modifier.fillMaxWidth(),
+            )
+        } else {
+            ActionRow(
+                primaryLabel = if (state.showTuneBudsControls && state.isAudioRecording) {
+                    stringResource(Res.string.dashboard_stop)
+                } else {
+                    stringResource(Res.string.dashboard_audio)
+                },
+                onPrimary = { onAction(GlassesDashboardAction.StartAudioRecording) },
+                secondaryLabel = stringResource(Res.string.dashboard_count),
+                onSecondary = { onAction(GlassesDashboardAction.RequestMediaCount) },
+            )
+        }
+        if (state.showMediaSync && !state.showHeyCyanControls) {
             ActionButton(
                 label = stringResource(Res.string.dashboard_sync_wifi),
                 onClick = { onAction(GlassesDashboardAction.StartSync) },
@@ -593,6 +608,115 @@ private fun CoreGlassesControls(
                 secondaryEnabled = state.livePreview.canStop,
                 secondaryStyle = ActionButtonStyle.Destructive,
             )
+        }
+    }
+}
+
+@Composable
+private fun HeyCyanMediaStatusSection(
+    state: GlassesDashboardUiState,
+    onAction: (GlassesDashboardAction) -> Unit,
+) {
+    val media = state.heyCyanMedia
+    val remainingSlots = when (val capacity = media.capacity) {
+        is HeyCyanMediaCapacityUiState.Known -> capacity.remainingMediaSlots.toString()
+        HeyCyanMediaCapacityUiState.Unknown -> stringResource(Res.string.dashboard_capacity_unknown)
+    }
+
+    Column(
+        modifier = Modifier.testTag("heycyan_media_status"),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        SectionTitle(stringResource(Res.string.dashboard_heycyan_glasses_status), accented = true)
+        Text(stringResource(Res.string.dashboard_media_photos, media.inventory.photos ?: "--"))
+        Text(stringResource(Res.string.dashboard_media_videos, media.inventory.videos ?: "--"))
+        Text(stringResource(Res.string.dashboard_media_audio, media.inventory.audio ?: "--"))
+        Text(stringResource(Res.string.dashboard_remaining_media_slots, remainingSlots))
+        if (media.sync.stage != HeyCyanMediaSyncStage.IDLE) {
+            Text(
+                text = "${media.sync.stage.label}: ${media.sync.detail}",
+                style = MaterialTheme.typography.bodySmall,
+                color = if (media.sync.stage == HeyCyanMediaSyncStage.FAILED) {
+                    MaterialTheme.colorScheme.error
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+                modifier = Modifier.testTag("heycyan_media_sync_stage"),
+            )
+        }
+        if (media.syncSummary.hasAttempt) {
+            Text(
+                text = "Sync summary",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.testTag("heycyan_media_sync_summary"),
+            )
+            Text(
+                text = "Planned - Photos: ${media.syncSummary.planned.photos}, Videos: ${media.syncSummary.planned.videos}, Audio: ${media.syncSummary.planned.audio}",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            Text(
+                text = "Completed - Photos: ${media.syncSummary.completed.photos}, Videos: ${media.syncSummary.completed.videos}, Audio: ${media.syncSummary.completed.audio}",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            Text(
+                text = "Failed - Photos: ${media.syncSummary.failed.photos}, Videos: ${media.syncSummary.failed.videos}, Audio: ${media.syncSummary.failed.audio}",
+                style = MaterialTheme.typography.bodySmall,
+                color = if (media.syncSummary.failed.total > 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        if (media.capture.availability == HeyCyanCaptureAvailability.BLOCKED_STORAGE_FULL) {
+            Text(
+                text = stringResource(Res.string.dashboard_storage_full_sync_prompt),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+            )
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            ActionButton(
+                label = stringResource(Res.string.dashboard_refresh),
+                onClick = { onAction(GlassesDashboardAction.RequestMediaCount) },
+                modifier = Modifier
+                    .weight(1f)
+                    .testTag("heycyan_media_refresh"),
+            )
+            ActionButton(
+                label = stringResource(Res.string.dashboard_sync_images),
+                onClick = { onAction(GlassesDashboardAction.StartSync) },
+                style = ActionButtonStyle.Primary,
+                modifier = Modifier
+                    .weight(1f)
+                    .testTag("heycyan_media_sync"),
+            )
+        }
+        when {
+            media.syncSummary.canRetryUnresolvedFiles -> {
+                ActionButton(
+                    label = "Retry unresolved files",
+                    onClick = { onAction(GlassesDashboardAction.RetryHeyCyanUnresolvedFiles) },
+                    style = ActionButtonStyle.Primary,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("heycyan_media_retry_unresolved"),
+                )
+            }
+            media.sync.stage !in setOf(
+                HeyCyanMediaSyncStage.IDLE,
+                HeyCyanMediaSyncStage.COMPLETED,
+                HeyCyanMediaSyncStage.FAILED,
+            ) -> {
+                ActionButton(
+                    label = stringResource(Res.string.dashboard_stop_sync),
+                    onClick = { onAction(GlassesDashboardAction.StopSync) },
+                    style = ActionButtonStyle.Destructive,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("heycyan_media_stop_sync"),
+                )
+            }
         }
     }
 }
@@ -676,13 +800,18 @@ private fun GlassesAssistantControls(
         ) {
             OutlinedButton(
                 onClick = { onAction(GlassesDashboardAction.CaptureAndPreviewGlassesImage) },
-                modifier = Modifier.weight(1f),
+                enabled = state.heyCyanMedia.capture.canCaptureAndPreview,
+                modifier = Modifier
+                    .weight(1f)
+                    .testTag("heycyan_capture_and_preview"),
             ) {
                 Text("Capture + Preview")
             }
             OutlinedButton(
                 onClick = { onAction(GlassesDashboardAction.PreviewLastGlassesImage) },
-                modifier = Modifier.weight(1f),
+                modifier = Modifier
+                    .weight(1f)
+                    .testTag("heycyan_preview_last"),
             ) {
                 Text("Preview last JPEG")
             }

@@ -9,6 +9,7 @@ import okhttp3.Response
 import java.io.File
 import java.io.IOException
 import java.util.concurrent.atomic.AtomicReference
+import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
 
 class VendorAlbumDownloader(
@@ -139,6 +140,10 @@ class VendorAlbumDownloader(
     private companion object {
         // AndroidNetworking in the vendor app delegates downloads to a normal OkHttp client.
         // Keep this client unbound so routing behavior remains vendor-like.
-        val CLIENT = OkHttpClient()
+        val CLIENT = OkHttpClient.Builder()
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(3, TimeUnit.MINUTES)
+            .callTimeout(4, TimeUnit.MINUTES)
+            .build()
     }
 }

@@ -1,86 +1,40 @@
 package com.fersaiyan.cyanbridge.ai.live
 
 import android.graphics.BitmapFactory
-import com.fersaiyan.cyanbridge.ai.image.ImageThumbnailQuality
 import com.fersaiyan.cyanbridge.shared.glasses.GlassesSessionCoordinator
 import com.oudmon.ble.base.bluetooth.BleOperateManager
 import com.oudmon.ble.base.communication.LargeDataHandler
 import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeoutOrNull
-import java.io.ByteArrayOutputStream
 
 /**
- * The HeyCyan protocol exposes a single capture trigger for the camera thumbnail flow.
- * The distinction between a preview-only action and an AI-question action is therefore not
- * encoded as a different BLE command; it is encoded in the code path that follows the capture.
+ * Collects a HeyCyan thumbnail only after its caller has confirmed a new persisted photo
+ * through a pre/post media-count comparison. Packet and JPEG handling remains observational.
  */
 class GeminiLiveGlassesImageCapture {
-    /** Used for preview-only UI actions; no spoken-question / AI-analysis flow is started. */
-    suspend fun captureForPreviewOnly(quality: ImageThumbnailQuality): ByteArray {
-        return captureImage(quality, requestAiQuestionFlow = false)
+    class PersistedPhoto private constructor(
+        internal val isPersistenceConfirmed: Boolean,
+    ) {
+        companion object {
+            fun fromPhotoCountIncrease(
+                baselinePhotoCount: Int,
+                followUpPhotoCount: Int,
+            ): PersistedPhoto? =
+                PersistedPhoto(isPersistenceConfirmed = true)
+                    .takeIf { followUpPhotoCount > baselinePhotoCount }
+        }
     }
 
-    /** Used for the AI question path; this path still uses the same underlying capture trigger. */
-    suspend fun captureForAiQuestion(quality: ImageThumbnailQuality): ByteArray {
-        return captureImage(quality, requestAiQuestionFlow = true)
-    }
-
-    @Deprecated(
-        "Prefer captureForPreviewOnly() or captureForAiQuestion() for clarity. " +
-            "The device still uses the same underlying camera trigger for both flows.",
-        ReplaceWith("captureForPreviewOnly(quality)"),
-    )
-    suspend fun capture(quality: ImageThumbnailQuality): ByteArray = captureForPreviewOnly(quality)
-
-    /** Reads the thumbnail already taken by the glasses' physical AI-photo button. */
-    suspend fun captureFromHardwareButton(): ByteArray {
+    /** Reads a thumbnail for a photo that [confirmPhotoPersistence] has already verified. */
+    suspend fun collectThumbnailAfterPersistenceConfirmed(
+        persistedPhoto: PersistedPhoto,
+    ): ByteArray {
+        check(persistedPhoto.isPersistenceConfirmed) { "Photo persistence was not confirmed" }
         check(BleOperateManager.getInstance().isConnected) { "Glasses are not connected" }
         val permit = GlassesSessionCoordinator.tryAcquireBackgroundCommand()
             ?: throw IllegalStateException("Glasses are busy with another operation")
         try {
             return receiveThumbnail()
-        } finally {
-            GlassesSessionCoordinator.releaseBackgroundCommand(permit)
-        }
-    }
-
-    private suspend fun captureImage(
-        quality: ImageThumbnailQuality,
-        requestAiQuestionFlow: Boolean,
-    ): ByteArray {
-        check(BleOperateManager.getInstance().isConnected) { "Glasses are not connected" }
-        val permit = GlassesSessionCoordinator.tryAcquireBackgroundCommand()
-            ?: throw IllegalStateException("Glasses are busy with another operation")
-        try {
-            // This is the key protocol limitation: the hardware exposes a single capture trigger
-            // (0x02 / 0x06 quality selection) for both preview-only and AI-question use cases.
-            // The distinction is made by whether the caller then starts the question workflow,
-            // not by a separate "capture without AI" command.
-            val captureCommand = byteArrayOf(
-                0x02.toByte(),
-                0x01.toByte(),
-                0x06.toByte(),
-                quality.sdkValue.toByte(),
-                quality.sdkValue.toByte(),
-            )
-            android.util.Log.i(
-                "CaptureTrace",
-                "HeyCyan capture command flow=${if (requestAiQuestionFlow) "AI_QUESTION" else "PREVIEW_ONLY"} " +
-                    "payload=${captureCommand.joinToString(separator = ",") { (it.toInt() and 0xFF).toString() }}",
-            )
-            LargeDataHandler.getInstance().glassesControl(captureCommand) { _, _ -> }
-            delay(CAPTURE_SETTLE_MS)
-            val thumbnail = receiveThumbnail()
-            android.util.Log.i(
-                "CaptureTrace",
-                "HeyCyan thumbnail received bytes=${thumbnail.size} flow=${if (requestAiQuestionFlow) "AI_QUESTION" else "PREVIEW_ONLY"}",
-            )
-            if (requestAiQuestionFlow) {
-                // Intentionally left as a marker for the question-driven path; no extra capture
-                // command exists beyond the shared trigger above.
-            }
-            return thumbnail
         } finally {
             GlassesSessionCoordinator.releaseBackgroundCommand(permit)
         }
@@ -258,7 +212,6 @@ class GeminiLiveGlassesImageCapture {
     }
 
     private companion object {
-        const val CAPTURE_SETTLE_MS = 4_000L
         const val TRANSFER_TIMEOUT_MS = 10_000L
     }
 }

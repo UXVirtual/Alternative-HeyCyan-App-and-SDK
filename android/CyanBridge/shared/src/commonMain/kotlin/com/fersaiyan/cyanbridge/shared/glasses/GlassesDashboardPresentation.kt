@@ -17,6 +17,7 @@ data class GlassesDashboardUiState(
     val showStorage: Boolean = false,
     val deviceInfoLabel: String? = null,
     val transfer: GlassesTransferUiState = GlassesTransferUiState(),
+    val heyCyanMedia: HeyCyanMediaUiState = HeyCyanMediaUiState(),
     val meeting: GlassesMeetingUiState = GlassesMeetingUiState(),
     val nativePluginShortcut: NativePluginShortcutUiState? = null,
     val assistantMode: GlassesAssistantMode = GlassesAssistantMode.PHONE_ASSISTANT,
@@ -67,6 +68,164 @@ data class GlassesTransferUiState(
     /** Null represents indeterminate progress. */
     val progress: Float? = null,
 )
+
+/**
+ * HeyCyan on-device media state. This remains independent from [GlassesTransferUiState],
+ * whose counts describe the current phone transfer rather than the glasses inventory.
+ */
+data class HeyCyanMediaUiState(
+    val inventory: HeyCyanMediaInventoryUiState = HeyCyanMediaInventoryUiState(),
+    val capacity: HeyCyanMediaCapacityUiState = HeyCyanMediaCapacityUiState.Unknown,
+    val capacityPolicyInvalidated: Boolean = false,
+    val capacityPolicyScope: String? = null,
+    val capture: HeyCyanCaptureUiState = HeyCyanCaptureUiState(),
+    val sync: HeyCyanMediaSyncUiState = HeyCyanMediaSyncUiState(),
+    val syncSummary: HeyCyanMediaSyncSummaryUiState = HeyCyanMediaSyncSummaryUiState(),
+)
+
+/** HeyCyan's BLE, P2P, and HTTP media-sync lifecycle, separate from file progress. */
+data class HeyCyanMediaSyncUiState(
+    val stage: HeyCyanMediaSyncStage = HeyCyanMediaSyncStage.IDLE,
+    val detail: String = "Idle",
+)
+
+/** Per-attempt transfer accounting, intentionally separate from glasses inventory. */
+data class HeyCyanMediaSyncSummaryUiState(
+    val planned: HeyCyanMediaTypeCounts = HeyCyanMediaTypeCounts(),
+    val completed: HeyCyanMediaTypeCounts = HeyCyanMediaTypeCounts(),
+    val failed: HeyCyanMediaTypeCounts = HeyCyanMediaTypeCounts(),
+    val canRetryUnresolvedFiles: Boolean = false,
+) {
+    val hasAttempt: Boolean
+        get() = planned.total > 0
+}
+
+data class HeyCyanMediaTypeCounts(
+    val photos: Int = 0,
+    val videos: Int = 0,
+    val audio: Int = 0,
+) {
+    val total: Int
+        get() = photos + videos + audio
+}
+
+enum class HeyCyanMediaSyncStage(val label: String) {
+    IDLE("Idle"),
+    PREFLIGHT("Preflight"),
+    ENTERING_TRANSFER_MODE("Entering transfer mode"),
+    WAITING_FOR_P2P("Waiting for P2P"),
+    WAITING_FOR_GLASSES_IP("Waiting for glasses IP"),
+    READING_MEDIA_CONFIG("Reading media.config"),
+    DOWNLOADING("Downloading"),
+    VERIFYING("Verifying"),
+    EXITING_TRANSFER_MODE("Exiting transfer mode"),
+    TEARING_DOWN("Tearing down"),
+    COMPLETED("Completed"),
+    FAILED("Failed"),
+}
+
+/** Counts reported by the HeyCyan `02 04` media-count command. */
+data class HeyCyanMediaInventoryUiState(
+    val photos: Int? = null,
+    val videos: Int? = null,
+    val audio: Int? = null,
+) {
+    val isKnown: Boolean
+        get() = photos != null && videos != null && audio != null
+
+    val totalItems: Int?
+        get() = if (isKnown) photos!! + videos!! + audio!! else null
+}
+
+/** Capacity is meaningful only for a verified HeyCyan hardware/firmware profile. */
+sealed interface HeyCyanMediaCapacityUiState {
+    data object Unknown : HeyCyanMediaCapacityUiState
+
+    data class Known(val remainingMediaSlots: Int) : HeyCyanMediaCapacityUiState {
+        init {
+            require(remainingMediaSlots >= 0) { "remainingMediaSlots must not be negative" }
+        }
+
+        val isFull: Boolean
+            get() = remainingMediaSlots == 0
+    }
+}
+
+/**
+ * Capacity is asserted only for the observed AM02 profile. A verified fifth
+ * item disproves the four-item limit and invalidates this policy.
+ */
+object HeyCyanMediaCapacityPolicy {
+    private const val VERIFIED_HARDWARE_VERSION = "AM02_V1.2"
+    private const val VERIFIED_FIRMWARE_VERSION = "AM02_1.20.00_260702"
+    private const val VERIFIED_MAX_ITEMS = 4
+
+    fun evaluate(
+        hardwareVersion: String?,
+        firmwareVersion: String?,
+        inventory: HeyCyanMediaInventoryUiState,
+        capacityPolicyInvalidated: Boolean = false,
+    ): HeyCyanMediaCapacityUiState {
+        val isVerifiedProfile = hardwareVersion?.trim().equals(VERIFIED_HARDWARE_VERSION, ignoreCase = true) &&
+            firmwareVersion?.trim().equals(VERIFIED_FIRMWARE_VERSION, ignoreCase = true)
+        val totalItems = inventory.totalItems
+        if (!isVerifiedProfile || capacityPolicyInvalidated || totalItems == null || totalItems >= VERIFIED_MAX_ITEMS + 1) {
+            return HeyCyanMediaCapacityUiState.Unknown
+        }
+        return HeyCyanMediaCapacityUiState.Known(
+            remainingMediaSlots = maxOf(0, VERIFIED_MAX_ITEMS - totalItems),
+        )
+    }
+
+    fun shouldInvalidate(
+        hardwareVersion: String?,
+        firmwareVersion: String?,
+        inventory: HeyCyanMediaInventoryUiState,
+    ): Boolean =
+        hardwareVersion?.trim().equals(VERIFIED_HARDWARE_VERSION, ignoreCase = true) &&
+            firmwareVersion?.trim().equals(VERIFIED_FIRMWARE_VERSION, ignoreCase = true) &&
+            (inventory.totalItems ?: 0) >= VERIFIED_MAX_ITEMS + 1
+}
+
+data class HeyCyanCaptureUiState(
+    val availability: HeyCyanCaptureAvailability = HeyCyanCaptureAvailability.AVAILABLE,
+    val result: HeyCyanCaptureResult = HeyCyanCaptureResult.IDLE,
+) {
+    val canCaptureAndPreview: Boolean
+        get() = availability == HeyCyanCaptureAvailability.AVAILABLE
+}
+
+enum class HeyCyanCaptureAvailability {
+    AVAILABLE,
+    BLOCKED_STORAGE_FULL,
+    UNAVAILABLE,
+}
+
+enum class HeyCyanCaptureResult {
+    IDLE,
+    IN_PROGRESS,
+    PHOTO_PERSISTED,
+    PHOTO_NOT_PERSISTED,
+    FAILED,
+}
+
+object HeyCyanCapturePolicy {
+    fun resolvePhotoPersistence(
+        baselinePhotoCount: Int,
+        followUpPhotoCount: Int,
+    ): HeyCyanCaptureUiState =
+        if (followUpPhotoCount > baselinePhotoCount) {
+            HeyCyanCaptureUiState(
+                availability = HeyCyanCaptureAvailability.AVAILABLE,
+                result = HeyCyanCaptureResult.PHOTO_PERSISTED,
+            )
+        } else {
+            HeyCyanCaptureUiState(
+                availability = HeyCyanCaptureAvailability.BLOCKED_STORAGE_FULL,
+                result = HeyCyanCaptureResult.PHOTO_NOT_PERSISTED,
+            )
+        }
+}
 
 /**
  * Presentation-only choices for a glasses media sync. Platform adapters retain
@@ -238,6 +397,7 @@ sealed interface GlassesDashboardAction {
     data object StartAudioRecording : GlassesDashboardAction
     data object RequestMediaCount : GlassesDashboardAction
     data object StartSync : GlassesDashboardAction
+    data object RetryHeyCyanUnresolvedFiles : GlassesDashboardAction
     data object StopSync : GlassesDashboardAction
     data object ToggleAdvanced : GlassesDashboardAction
     data object StartAgent : GlassesDashboardAction

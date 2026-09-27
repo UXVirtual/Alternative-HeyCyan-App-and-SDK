@@ -157,27 +157,10 @@ class GeminiLiveActivity : AppCompatActivity(), GeminiLiveClient.Listener {
     private fun captureHardwareImageQuestion() {
         if (!liveListening) return
         if (!hardwareImageCaptureInProgress.compareAndSet(false, true)) return
-        status.text = "Receiving glasses AI photo"
-        lifecycleScope.launch {
-            val result = withContext(Dispatchers.IO) {
-                runCatching { GeminiLiveGlassesImageCapture().captureFromHardwareButton() }
-            }
-            result
-                .onSuccess { image ->
-                    client.sendImage(image)
-                    visionStatus = "Glasses vision: manual AI-photo sent"
-                    status.text = "Image sent to Gemini Live"
-                    renderIndicators()
-                }
-                .onFailure { error ->
-                    Toast.makeText(
-                        this@GeminiLiveActivity,
-                        error.message ?: "Glasses image capture failed",
-                        Toast.LENGTH_LONG,
-                    ).show()
-                }
-            hardwareImageCaptureInProgress.set(false)
-        }
+        visionStatus = "Glasses vision: photo persistence must be confirmed before transfer"
+        status.text = "Confirm the photo count before requesting a preview"
+        renderIndicators()
+        hardwareImageCaptureInProgress.set(false)
     }
 
     private fun hasPaidPlan(): Boolean =

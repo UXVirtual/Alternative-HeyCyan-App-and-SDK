@@ -437,6 +437,15 @@
     <string name="dashboard_sync_progress">Sync progress</string>
     <string name="dashboard_flow">Flow: %1$s</string>
     <string name="dashboard_stop_sync">Stop sync</string>
+    <string name="dashboard_heycyan_glasses_status">HeyCyan Glasses</string>
+    <string name="dashboard_media_photos">Photos: %1$s</string>
+    <string name="dashboard_media_videos">Videos: %1$s</string>
+    <string name="dashboard_media_audio">Audio: %1$s</string>
+    <string name="dashboard_remaining_media_slots">Remaining media slots: %1$s</string>
+    <string name="dashboard_capacity_unknown">Unknown</string>
+    <string name="dashboard_storage_full_sync_prompt">Storage full. Sync images to continue.</string>
+    <string name="dashboard_refresh">Refresh</string>
+    <string name="dashboard_sync_images">Sync images</string>
     <string name="dashboard_media_controls">Media controls</string>
     <string name="dashboard_photo">Photo</string>
     <string name="dashboard_video">Video</string>

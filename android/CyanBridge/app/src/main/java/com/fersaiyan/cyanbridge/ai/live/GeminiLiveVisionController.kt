@@ -119,28 +119,11 @@ class GeminiLiveVisionController(
         if (!captureInProgress.compareAndSet(false, true)) return
 
         // HeyCyan makes an audible shutter sound when the capture command is issued. Start the
-        // cooldown on the attempt, not on successful transfer, so a BLE/thumbnail failure cannot
-        // make the next utterance immediately trigger another shutter.
+        // cooldown on the request. This flow has no count-confirmed persistence transaction,
+        // so it must not trigger a HeyCyan thumbnail transfer on its own.
         lastAutomaticStillMs = now
-        onStatus("Glasses vision: capturing a fresh still while you speak")
-        stillJob = scope.launch {
-            val result = withContext(Dispatchers.IO) {
-                runCatching {
-                    GeminiLiveGlassesImageCapture().capture(
-                        ImageQuestionPreferences.thumbnailQuality(appContext),
-                    )
-                }
-            }
-            result.onSuccess { jpeg ->
-                if (active) {
-                    client.sendVideoFrame(jpeg)
-                    onStatus("Glasses vision: fresh still sent")
-                }
-            }.onFailure { error ->
-                if (active) onStatus("Glasses vision: ${error.message ?: "automatic still unavailable"}")
-            }
-            captureInProgress.set(false)
-        }
+        onStatus("Glasses vision: automatic still awaits count-confirmed capture")
+        captureInProgress.set(false)
     }
 
     private fun startMetaLiveFrames() {
