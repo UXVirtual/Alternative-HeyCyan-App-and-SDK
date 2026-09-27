@@ -27,18 +27,21 @@ data class ResolvedImageQuestionPrompt(
 }
 
 object ImageQuestionDefaults {
-    fun listeningCueForLanguage(languageTag: String): String = when (
+    fun listeningCueForLanguage(languageTag: String): String =
+        listeningCuesForLanguage(languageTag).random()
+
+    fun listeningCuesForLanguage(languageTag: String): List<String> = when (
         Locale.forLanguageTag(languageTag).language.lowercase(Locale.ROOT)
     ) {
-        "pt" -> "Estou ouvindo."
-        "es" -> "Te escucho."
-        "de" -> "Ich höre zu."
-        "fr" -> "Je vous écoute."
-        "it" -> "Ti ascolto."
-        "zh" -> "我在听。"
-        "ko" -> "듣고 있습니다."
-        "ru" -> "Я слушаю."
-        else -> "I am listening."
+        "pt" -> listOf("Diga?", "Sim?", "Estou ouvindo.")
+        "es" -> listOf("¿Sí?", "Te escucho.", "Adelante.")
+        "de" -> listOf("Ja?", "Ich höre zu.", "Bitte.")
+        "fr" -> listOf("Oui ?", "Je vous écoute.", "Je vous en prie.")
+        "it" -> listOf("Sì?", "Ti ascolto.", "Dimmi.")
+        "zh" -> listOf("嗯？", "我在听。", "请说。")
+        "ko" -> listOf("네?", "듣고 있습니다.", "말씀하세요.")
+        "ru" -> listOf("Да?", "Я слушаю.", "Говорите.")
+        else -> listOf("Uh-huh?", "Yeah?", "Okay, shoot.")
     }
 
     fun questionCueForLanguage(languageTag: String): String = when (

@@ -165,30 +165,37 @@ class RemoteOpenAiClientTest {
     }
 
     @Test
-    fun tts_cache_key_is_stable_and_changes_with_voice_or_instructions() {
+    fun tts_cache_key_is_stable_and_changes_with_acknowledgement_voice_or_instructions() {
         val first = RemoteOpenAiClient.buildTtsCacheKey(
-            input = "I am listening.",
+            input = "Uh-huh?",
             model = "gpt-4o-mini-tts",
             voice = "alloy",
             instructions = "Speak warmly.",
             responseFormat = "mp3",
         )
         val same = RemoteOpenAiClient.buildTtsCacheKey(
-            input = "I am listening.",
+            input = "Uh-huh?",
+            model = "gpt-4o-mini-tts",
+            voice = "alloy",
+            instructions = "Speak warmly.",
+            responseFormat = "mp3",
+        )
+        val differentAcknowledgement = RemoteOpenAiClient.buildTtsCacheKey(
+            input = "Yeah?",
             model = "gpt-4o-mini-tts",
             voice = "alloy",
             instructions = "Speak warmly.",
             responseFormat = "mp3",
         )
         val differentVoice = RemoteOpenAiClient.buildTtsCacheKey(
-            input = "I am listening.",
+            input = "Uh-huh?",
             model = "gpt-4o-mini-tts",
             voice = "sage",
             instructions = "Speak warmly.",
             responseFormat = "mp3",
         )
         val differentInstructions = RemoteOpenAiClient.buildTtsCacheKey(
-            input = "I am listening.",
+            input = "Uh-huh?",
             model = "gpt-4o-mini-tts",
             voice = "alloy",
             instructions = "Speak warmly and slowly.",
@@ -196,6 +203,7 @@ class RemoteOpenAiClientTest {
         )
 
         assertEquals(first, same)
+    assertFalse(first == differentAcknowledgement)
         assertFalse(first == differentVoice)
         assertFalse(first == differentInstructions)
         assertTrue(first.matches(Regex("^[a-f0-9]{64}$")))

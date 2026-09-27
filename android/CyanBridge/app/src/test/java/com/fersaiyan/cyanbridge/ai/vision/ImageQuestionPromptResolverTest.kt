@@ -82,10 +82,17 @@ class ImageQuestionPromptResolverTest {
     }
 
     @Test
-    fun voiceListeningCueUsesTheSelectedAppLanguage() {
-        assertEquals("I am listening.", ImageQuestionDefaults.listeningCueForLanguage("en"))
-        assertEquals("Estou ouvindo.", ImageQuestionDefaults.listeningCueForLanguage("pt-BR"))
-        assertEquals("Je vous écoute.", ImageQuestionDefaults.listeningCueForLanguage("fr"))
+    fun voiceListeningCueRandomlyUsesASelectedAppLanguageVariation() {
+        val englishCues = listOf("Uh-huh?", "Yeah?", "Okay, shoot.")
+        val portugueseCues = listOf("Diga?", "Sim?", "Estou ouvindo.")
+        val frenchCues = listOf("Oui ?", "Je vous écoute.", "Je vous en prie.")
+
+        assertEquals(englishCues, ImageQuestionDefaults.listeningCuesForLanguage("en"))
+        assertEquals(portugueseCues, ImageQuestionDefaults.listeningCuesForLanguage("pt-BR"))
+        assertEquals(frenchCues, ImageQuestionDefaults.listeningCuesForLanguage("fr"))
+        assertTrue(ImageQuestionDefaults.listeningCueForLanguage("en") in englishCues)
+        assertTrue(ImageQuestionDefaults.listeningCueForLanguage("pt-BR") in portugueseCues)
+        assertTrue(ImageQuestionDefaults.listeningCueForLanguage("fr") in frenchCues)
     }
 
     @Test
