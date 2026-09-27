@@ -121,6 +121,18 @@ class GlassesDashboardPresentationTest {
     }
 
     @Test
+    fun verifiedHeyCyanProfileBlocksCaptureWhenPhotosAndAudioFillAllSlots() {
+        val capacity = HeyCyanMediaCapacityPolicy.evaluate(
+            hardwareVersion = "AM02_V1.2",
+            firmwareVersion = "AM02_1.20.00_260702",
+            inventory = HeyCyanMediaInventoryUiState(photos = 3, videos = 0, audio = 1),
+        )
+
+        assertEquals(HeyCyanMediaCapacityUiState.Known(remainingMediaSlots = 0), capacity)
+        assertTrue((capacity as HeyCyanMediaCapacityUiState.Known).isFull)
+    }
+
+    @Test
     fun unsupportedOrDisprovenHeyCyanProfileHasUnknownCapacity() {
         val unsupported = HeyCyanMediaCapacityPolicy.evaluate(
             hardwareVersion = "AM02_V1.3",

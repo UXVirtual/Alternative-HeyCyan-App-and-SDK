@@ -531,7 +531,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         private const val TRANSFER_MODE_COMMAND_TIMEOUT_MS = 10_000L
         private const val IMAGE_THUMBNAIL_TRANSFER_TIMEOUT_MS = 20_000L
         private const val HEY_CYAN_CAPTURE_ACK_TIMEOUT_MS = 6_000L
-        private const val HEY_CYAN_CAPTURE_NOTIFY_TIMEOUT_MS = 4_000L
+        private const val HEY_CYAN_CAPTURE_NOTIFY_TIMEOUT_MS = 10_000L
         private const val HEY_CYAN_CAPTURE_COUNT_TIMEOUT_MS = 6_000L
         private const val VOICE_CUE_ROUTE_SETTLE_MS = 500L
         private const val VOICE_BLUETOOTH_ROUTE_TIMEOUT_MS = 3_000L
@@ -4971,6 +4971,31 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             try {
                 val baseline = readHeyCyanMediaCountsForCapture("baseline")
                     ?: throw IOException("Could not read the baseline photo count")
+                    updateHeyCyanMediaInventory(baseline)
+                    val baselineCapacity = HeyCyanMediaCapacityPolicy.evaluate(
+                        hardwareVersion = MyApplication.getInstance().hardwareVersion,
+                        firmwareVersion = MyApplication.getInstance().firmwareVersion,
+                        inventory = HeyCyanMediaInventoryUiState(
+                            photos = baseline.photos,
+                            videos = baseline.videos,
+                            audio = baseline.audio,
+                        ),
+                        capacityPolicyInvalidated = dashboardState.heyCyanMedia.capacityPolicyInvalidated,
+                    )
+                    if (baselineCapacity is HeyCyanMediaCapacityUiState.Known && baselineCapacity.isFull) {
+                        updateHeyCyanCaptureState(
+                            availability = HeyCyanCaptureAvailability.BLOCKED_STORAGE_FULL,
+                            result = HeyCyanCaptureResult.IDLE,
+                        )
+                        withContext(Dispatchers.Main) {
+                            Toast.makeText(
+                                this@MainActivity,
+                                "Glasses storage is full. Sync images before capturing another preview.",
+                                Toast.LENGTH_LONG,
+                            ).show()
+                        }
+                        return@launch
+                    }
                 val photoReady = CompletableDeferred<Unit>()
                 check(pendingHeyCyanPreviewPhotoReady.compareAndSet(null, photoReady)) {
                     "A HeyCyan preview capture is already awaiting a notification"
@@ -5073,8 +5098,10 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         photoReady: CompletableDeferred<Unit>,
     ): HeyCyanCaptureDiagnostics {
         val callback = CompletableDeferred<Pair<Int, Int>>()
-        val thumbnailSize = ImageQuestionPreferences.thumbnailQuality(this).sdkValue.toByte()
-        val command = byteArrayOf(0x02, 0x01, 0x06, thumbnailSize, thumbnailSize)
+            // The vendor companion's verified persisted-photo workflow uses the normal-photo action.
+            // The AI-photo action (`02 01 06`) produces a notification on this hardware but does
+            // not increase its stored-media count, so it cannot satisfy this transaction's contract.
+            val command = byteArrayOf(0x02, 0x01, 0x01)
         LargeDataHandler.getInstance().glassesControl(command) { _, captureResponse ->
             if (!callback.isCompleted) {
                 callback.complete(captureResponse.dataType to captureResponse.errorCode)
