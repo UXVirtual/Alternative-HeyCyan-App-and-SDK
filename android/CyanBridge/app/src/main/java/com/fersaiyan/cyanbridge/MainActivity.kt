@@ -32,6 +32,7 @@ import com.fersaiyan.cyanbridge.media.HeyCyanMediaManifestItem
 import com.fersaiyan.cyanbridge.media.HeyCyanModelCapturePolicy
 import com.fersaiyan.cyanbridge.media.HeyCyanPhotoReadyClaim
 import com.fersaiyan.cyanbridge.media.HeyCyanMediaType
+import com.fersaiyan.cyanbridge.media.ModelCaptureAnnouncementQueue
 import com.fersaiyan.cyanbridge.media.HeyCyanTransferLedger
 import com.fersaiyan.cyanbridge.media.HeyCyanTransferLedgerStore
 import com.fersaiyan.cyanbridge.media.HeyCyanSyncPolicy
@@ -656,6 +657,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private var downloadExitTransferTimedOut = false
     private var downloadExitTransferTimeoutJob: Job? = null
     private var pendingDownloadTeardownFinish: ((Boolean) -> Unit)? = null
+    private var pendingDownloadTeardownFailure: (() -> Unit)? = null
     private var downloadCancelledByUser = false
     private var mediaSyncQuarantined = false
     private var mediaSyncQuarantineReason: String? = null
@@ -709,6 +711,17 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private var mediaDownloadPurpose = MediaDownloadPurpose.FULL_SYNC
     private var highQualityImageRequest: HighQualityImageRequest? = null
     private var modelCaptureRequest: ModelCaptureRequest? = null
+    private val modelCaptureAnnouncements by lazy { ModelCaptureAnnouncementQueue(this, lifecycleScope) }
+    private val modelCaptureProfileChangeListener =
+        android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, _ ->
+            val request = modelCaptureRequest
+            if (request != null &&
+                (!isHeyCyanSelected() ||
+                    DeviceProfileStore.loadLastSelected(this)?.macAddress != request.profileMacAddress)
+            ) {
+                runOnUiThread(::failActiveModelCaptureForProfileChange)
+            }
+        }
     private var manualFullResSaveCallback: ((File) -> Unit)? = null
     private var syncAllRemainingPhotosMode = false
     private var lastGlassesPreviewFile: File? = null
@@ -807,6 +820,9 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        getSharedPreferences("device_profile", MODE_PRIVATE)
+            .registerOnSharedPreferenceChangeListener(modelCaptureProfileChangeListener)
+        abandonModelCaptureForActivityDestruction()
         dashboardState = dashboardState.copy(modelCapture = modelCaptureAssets.restoreUiState())
         initialDestination = destinationFromIntent(intent)
         binding = AcitivytMainBinding.inflate(layoutInflater)
@@ -953,6 +969,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         if (eyevueLivePreviewManager?.isActive == true) {
             eyevueLivePreviewManager?.stop()
         }
+        dashboardState.modelCapture.activeOperationId?.let(::cancelModelCapture)
         super.onStop()
         stopBatteryPolling()
         unregisterMeetingCaptureReceiver()
@@ -972,6 +989,9 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     }
 
     override fun onDestroy() {
+        getSharedPreferences("device_profile", MODE_PRIVATE)
+            .unregisterOnSharedPreferenceChangeListener(modelCaptureProfileChangeListener)
+        modelCaptureAnnouncements.release()
         cancelLocalStreamingSpeech("activity destroyed")
         val voiceQueryWasActive = voiceQueryInProgress.getAndSet(null) != null
         activeVoiceRecognizer.getAndSet(null)?.let { recognizer ->
@@ -2024,11 +2044,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                 startModelCapture(action.operationId)
             }
             is GlassesDashboardAction.CancelModelCapture -> {
-                dispatchModelCapture(ModelCaptureAction.CancelModelCapture(action.operationId))
-                if (modelCaptureRequest?.operationId == action.operationId) {
-                    modelCaptureRequest = null
-                    cancelDataDownloadAttempt("3D capture cancelled", showToast = false)
-                }
+                cancelModelCapture(action.operationId)
             }
             GlassesDashboardAction.CaptureAndPreviewGlassesImage -> previewCapturedGlassesImageFromUi()
             GlassesDashboardAction.PreviewLastGlassesImage -> previewLastCapturedGlassesImageFromUi()
@@ -8292,12 +8308,76 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
     private data class ModelCaptureRequest(
         val operationId: ModelCaptureOperationId,
+        val profileMacAddress: String,
+        val sessionLease: GlassesSessionLease,
         val preCaptureMediaSnapshot: Set<HeyCyanMediaManifestItem>? = null,
     )
 
+    private fun isActiveModelCaptureRequest(
+        request: ModelCaptureRequest,
+        sessionId: Long? = null,
+    ): Boolean {
+        return modelCaptureRequest === request &&
+            GlassesSessionCoordinator.isActive(request.sessionLease) &&
+            DeviceProfileStore.loadLastSelected(this)?.macAddress == request.profileMacAddress &&
+            isHeyCyanSelected() &&
+            (sessionId == null || isDownloadSessionActive(sessionId))
+    }
+
+    private fun cancelModelCapture(operationId: ModelCaptureOperationId) {
+        val request = modelCaptureRequest
+        if (request?.operationId != operationId) return
+
+        modelCaptureRequest = null
+        modelCaptureAnnouncements.cancel(operationId)
+        modelCaptureAssets.clearPersistedAsset()
+        dispatchModelCapture(ModelCaptureAction.CancelModelCapture(operationId))
+        downloadCancelledByUser = true
+        closeActiveDownloadHttpWork()
+        finishDownloadInitialPhase("3D capture cancelled")
+        teardownDownloadP2pSession(
+            sendExitTransfer = true,
+            hideTransferUi = true,
+            onTeardownComplete = { mediaDownloadPurpose = MediaDownloadPurpose.FULL_SYNC },
+        )
+    }
+
+    private fun failActiveModelCaptureForProfileChange() {
+        val request = modelCaptureRequest ?: return
+        modelCaptureRequest = null
+        modelCaptureAnnouncements.cancel(request.operationId)
+        modelCaptureAssets.clearPersistedAsset()
+        dispatchModelCapture(
+            ModelCaptureAction.Fail(
+                request.operationId,
+                "3D capture stopped because the selected glasses profile changed",
+            ),
+        )
+        finishDownloadInitialPhase("3D capture cancelled after profile change")
+        closeActiveDownloadHttpWork()
+        downloadCancelledByUser = true
+        teardownDownloadP2pSession(
+            sendExitTransfer = true,
+            hideTransferUi = true,
+            onTeardownComplete = { mediaDownloadPurpose = MediaDownloadPurpose.FULL_SYNC },
+        )
+    }
+
+    private fun failModelCapturePreflight(
+        purpose: MediaDownloadPurpose,
+        reason: String,
+    ): Boolean {
+        if (purpose != MediaDownloadPurpose.MODEL_CAPTURE) return false
+        modelCaptureRequest?.operationId?.let { operationId ->
+            finishModelCaptureFailure(operationId, reason)
+        }
+        return true
+    }
+
     private fun startModelCapture(operationId: ModelCaptureOperationId) {
         if (dashboardState.modelCapture.isInProgress || modelCaptureRequest != null) return
-        if (!isHeyCyanSelected()) {
+        val profile = DeviceProfileStore.loadLastSelected(this)
+        if (!isHeyCyanSelected() || profile == null) {
             dispatchModelCapture(ModelCaptureAction.Fail(operationId, "HeyCyan glasses are required"))
             return
         }
@@ -8305,15 +8385,31 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             dispatchModelCapture(ModelCaptureAction.Fail(operationId, "Connect HeyCyan glasses first"))
             return
         }
+        val lease = acquireExclusiveGlassesSession(GlassesSession.MEDIA_SYNC) ?: run {
+            dispatchModelCapture(
+                ModelCaptureAction.Fail(
+                    operationId,
+                    "Another glasses command is active. Try 3D capture again when it finishes.",
+                ),
+            )
+            return
+        }
 
         dispatchModelCapture(ModelCaptureAction.StartModelCapture(operationId))
-        modelCaptureRequest = ModelCaptureRequest(operationId)
+        mediaSessionLease = lease
+        modelCaptureRequest = ModelCaptureRequest(
+            operationId = operationId,
+            profileMacAddress = profile.macAddress,
+            sessionLease = lease,
+        )
+        modelCaptureAnnouncements.announceTakingPicture(operationId)
         setTransferUiVisible(true)
         setTransferFlowLabel(GlassesSyncFlow.CUSTOM)
         setTransferDetail("Preparing 3D capture...")
         startDataDownload(
             mode = GlassesSyncFlow.CUSTOM,
             purpose = MediaDownloadPurpose.MODEL_CAPTURE,
+            preflightValidated = true,
         )
     }
 
@@ -8576,7 +8672,10 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         purpose: MediaDownloadPurpose = MediaDownloadPurpose.FULL_SYNC,
         preflightValidated: Boolean = false,
     ) {
-        if (rejectHeyCyanOnlyFeature("Wi-Fi media sync")) return
+        if (rejectHeyCyanOnlyFeature("Wi-Fi media sync")) {
+            failModelCapturePreflight(purpose, "HeyCyan glasses are required for 3D capture")
+            return
+        }
         if (!preflightValidated && !afterP2pTeardown) {
             beginHeyCyanSyncDiagnostics()
         }
@@ -8600,6 +8699,13 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         }
 
         if (mediaSyncQuarantined) {
+            if (failModelCapturePreflight(
+                    purpose,
+                    mediaSyncQuarantineReason ?: "Previous 3D capture cleanup is still unconfirmed.",
+                )
+            ) {
+                return
+            }
             failHeyCyanMediaSyncPreflight(
                 mediaSyncQuarantineReason ?: "Previous media-sync cleanup is still unconfirmed.",
             )
@@ -8636,6 +8742,9 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                 finishHighQualityImageFailure("Bluetooth disconnected before full-resolution image transfer could start.")
                 return
             }
+            if (failModelCapturePreflight(purpose, "Bluetooth disconnected before 3D capture transfer could start.")) {
+                return
+            }
             Toast.makeText(
                 this,
                 "Bluetooth not connected. Please connect to glasses first.",
@@ -8656,6 +8765,9 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                 finishHighQualityImageFailure("Wi-Fi must be enabled to retrieve the full-resolution image.")
                 return
             }
+            if (failModelCapturePreflight(purpose, "Wi-Fi must be enabled to retrieve the 3D capture.")) {
+                return
+            }
             Toast.makeText(
                 this,
                 "Please enable WiFi to sync with glasses.",
@@ -8664,14 +8776,32 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             return
         }
 
+            val reusingModelCaptureLease = purpose == MediaDownloadPurpose.MODEL_CAPTURE &&
+                modelCaptureRequest?.sessionLease === mediaSessionLease &&
+                mediaSessionLease?.let(GlassesSessionCoordinator::isActive) == true
             if (GlassesSessionCoordinator.isOwnedBy(GlassesSession.MEDIA_SYNC)) {
-                if (!isRetry || mediaSessionLease?.let(GlassesSessionCoordinator::isActive) != true) {
+                if (!reusingModelCaptureLease &&
+                    (!isRetry || mediaSessionLease?.let(GlassesSessionCoordinator::isActive) != true)
+                ) {
                     Log.w("DataDownload", "Media sync is already active or still tearing down")
+                    if (failModelCapturePreflight(
+                            purpose,
+                            "Another glasses session is still finishing. Please retry 3D capture once it completes.",
+                        )
+                    ) {
+                        return
+                    }
                     Toast.makeText(this, "Media sync is already using the glasses connection.", Toast.LENGTH_SHORT).show()
                     return
                 }
             } else {
-                mediaSessionLease = acquireExclusiveGlassesSession(GlassesSession.MEDIA_SYNC) ?: return
+                mediaSessionLease = acquireExclusiveGlassesSession(GlassesSession.MEDIA_SYNC) ?: run {
+                    failModelCapturePreflight(
+                        purpose,
+                        "Another glasses command is active. Please retry 3D capture when it finishes.",
+                    )
+                    return
+                }
             }
 
             downloadCancelledByUser = false
@@ -8714,6 +8844,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         downloadExitTransferResponsePending = false
         downloadExitTransferTimedOut = false
         pendingDownloadTeardownFinish = null
+        pendingDownloadTeardownFailure = null
         lastDownloadBleIpAtMs = 0L
         officialDisconnectRecoveryJob?.cancel()
         officialDisconnectRecoveryJob = null
@@ -9548,6 +9679,13 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                 )
                 return@launch
             }
+            if (failModelCapturePreflight(
+                    mediaDownloadPurpose,
+                    "Timed out waiting for the glasses Wi-Fi connection for 3D capture.",
+                )
+            ) {
+                return@launch
+            }
 
             quarantineHeyCyanMediaSync(
                 "Timed out waiting for Wi-Fi Direct or the glasses IP after ${waitedSeconds} seconds.",
@@ -10048,7 +10186,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         sessionId: Long,
     ) {
         val request = modelCaptureRequest ?: return
-        if (!isDownloadSessionActive(sessionId)) return
+        if (!isActiveModelCaptureRequest(request, sessionId)) return
         val preCaptureSnapshot = request.preCaptureMediaSnapshot
         if (preCaptureSnapshot == null) {
             try {
@@ -10063,14 +10201,19 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                 if (persistence.result != HeyCyanCaptureResult.PHOTO_PERSISTED) {
                     throw IOException("The glasses did not confirm that the 3D capture was saved")
                 }
+                if (!isActiveModelCaptureRequest(request, sessionId)) return
                 modelCaptureRequest = request.copy(
                     preCaptureMediaSnapshot = confirmedCapture.preCaptureMediaSnapshot,
                 )
                 withContext(Dispatchers.Main) {
+                    if (!isActiveModelCaptureRequest(modelCaptureRequest ?: return@withContext, sessionId)) {
+                        return@withContext
+                    }
                     dispatchModelCapture(ModelCaptureAction.CapturePersisted(request.operationId))
+                    modelCaptureAnnouncements.announceSyncingImage(request.operationId)
                     setTransferDetail("Photo saved. Finding the full-resolution image...")
                 }
-                delay(1_000)
+                if (!isActiveModelCaptureRequest(modelCaptureRequest ?: return, sessionId)) return
                 downloadMediaList(deviceIp, sessionId)
             } catch (error: Exception) {
                 finishModelCaptureFailure(request.operationId, error.message ?: "3D capture failed")
@@ -10092,6 +10235,10 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         deviceIp: String,
         sessionId: Long,
     ) {
+        val request = modelCaptureRequest
+        if (request == null || request.operationId != operationId || !isActiveModelCaptureRequest(request, sessionId)) {
+            return
+        }
         val partFile = modelCaptureAssets.createPartFile()
         try {
             val downloaded = httpGet(
@@ -10103,7 +10250,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                     input.copyTo(output, bufferSize = 128 * 1024)
                 }
             }
-            check(downloaded && partFile.length() > 0L && isDownloadSessionActive(sessionId)) {
+            check(downloaded && partFile.length() > 0L && isActiveModelCaptureRequest(request, sessionId)) {
                 "The full-resolution 3D capture download was incomplete"
             }
             val assetId = modelCaptureAssets.promoteVerifiedPart(partFile)
@@ -10113,9 +10260,26 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                 hideTransferUi = true,
                 onTeardownComplete = {
                     mediaDownloadPurpose = MediaDownloadPurpose.FULL_SYNC
+                    if (modelCaptureRequest?.operationId != operationId) return@teardownDownloadP2pSession
                     modelCaptureRequest = null
                     dispatchModelCapture(ModelCaptureAction.Complete(operationId, assetId))
                 },
+                onTeardownFailed = {
+                    mediaDownloadPurpose = MediaDownloadPurpose.FULL_SYNC
+                    modelCaptureAssets.delete(assetId)
+                    if (modelCaptureRequest?.operationId != operationId) {
+                        return@teardownDownloadP2pSession
+                    }
+                    modelCaptureRequest = null
+                    modelCaptureAnnouncements.cancel(operationId)
+                    dispatchModelCapture(
+                        ModelCaptureAction.Fail(
+                            operationId,
+                            "Wi-Fi Direct cleanup could not be confirmed. The 3D capture was discarded.",
+                        ),
+                    )
+                },
+                allowRetryAfterFailure = true,
             )
         } catch (error: Exception) {
             partFile.delete()
@@ -10127,6 +10291,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         val request = modelCaptureRequest
         if (request?.operationId != operationId) return
         modelCaptureRequest = null
+        modelCaptureAnnouncements.cancel(operationId)
         modelCaptureAssets.clearPersistedAsset()
         runOnUiThread {
             dispatchModelCapture(ModelCaptureAction.Fail(operationId, reason))
@@ -10138,6 +10303,19 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             hideTransferUi = true,
             onTeardownComplete = { mediaDownloadPurpose = MediaDownloadPurpose.FULL_SYNC },
         )
+    }
+    private fun abandonModelCaptureForActivityDestruction() {
+        val request = modelCaptureRequest ?: return
+        modelCaptureRequest = null
+        modelCaptureAnnouncements.cancel(request.operationId)
+        modelCaptureAssets.clearPersistedAsset()
+        dispatchModelCapture(
+            ModelCaptureAction.Fail(
+                request.operationId,
+                "3D capture stopped because the app was closed",
+            ),
+        )
+        mediaDownloadPurpose = MediaDownloadPurpose.FULL_SYNC
     }
 
     private fun beginHeyCyanTransferLedger(manifest: HeyCyanMediaManifest, sessionId: Long) {
@@ -11523,6 +11701,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         downloadExitTransferResponsePending = false
         downloadExitTransferTimedOut = false
         pendingDownloadTeardownFinish = null
+        pendingDownloadTeardownFailure = null
         mediaSyncQuarantined = false
         mediaSyncQuarantineReason = null
         releaseExclusiveGlassesSession(lease)
@@ -11535,6 +11714,8 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         hideTransferUi: Boolean,
         releaseExclusiveSession: Boolean = true,
         onTeardownComplete: (() -> Unit)? = null,
+        onTeardownFailed: (() -> Unit)? = null,
+        allowRetryAfterFailure: Boolean = false,
     ) {
         val teardownLease = mediaSessionLease
         recordHeyCyanSyncDiagnostic(
@@ -11553,6 +11734,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             Log.w("DataDownload", "P2P teardown is already in progress; waiting for its result")
             return
         }
+        pendingDownloadTeardownFailure = onTeardownFailed
         downloadAttemptJob?.cancel()
         downloadAttemptJob = null
         cancelDownloadSession()
@@ -11592,7 +11774,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         manager?.stopP2pOperations()
         manager?.cancelP2pConnection()
 
-        val finishTeardown: (Boolean) -> Unit = { releaseLease ->
+        val finishTeardown: (Boolean) -> Unit = { teardownConfirmed ->
             manager?.unregisterReceiver()
             downloadWifiP2pManager = null
             downloadWifiP2pCallback = null
@@ -11601,20 +11783,31 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             downloadP2pNetwork = null
             downloadResolvedHttpIp = null
             downloadP2pTeardownInProgress = false
-            if (releaseLease && releaseExclusiveSession) {
+            downloadExitTransferTimeoutJob?.cancel()
+            downloadExitTransferTimeoutJob = null
+            downloadExitTransferResponsePending = false
+            pendingDownloadTeardownFinish = null
+            if (releaseExclusiveSession) {
                 releaseExclusiveGlassesSession(teardownLease)
             }
             recordHeyCyanSyncDiagnostic(
                 "teardown_finished",
                 mapOf(
-                    "confirmed" to releaseLease.toString(),
+                    "confirmed" to teardownConfirmed.toString(),
                     "exit_timed_out" to downloadExitTransferTimedOut.toString(),
-                    "lease_released" to (releaseLease && releaseExclusiveSession).toString(),
+                    "lease_released" to releaseExclusiveSession.toString(),
                 ),
             )
-            if (releaseLease) {
+            if (teardownConfirmed) {
                 onTeardownComplete?.invoke()
+            } else {
+                if (allowRetryAfterFailure) {
+                    mediaSyncQuarantined = false
+                    mediaSyncQuarantineReason = null
+                }
+                pendingDownloadTeardownFailure?.invoke()
             }
+            pendingDownloadTeardownFailure = null
             Unit
         }
 
@@ -11636,6 +11829,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             manager = manager,
             attempt = 1,
             onRemoved = finishAfterTransferExit,
+            onTeardownFailure = { finishTeardown(false) },
         )
     }
 
@@ -11643,6 +11837,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         manager: WifiP2pManagerSingleton,
         attempt: Int,
         onRemoved: () -> Unit,
+        onTeardownFailure: () -> Unit,
     ) {
         val resultHandled = java.util.concurrent.atomic.AtomicBoolean(false)
         val handleResult: (Boolean) -> Unit = { success ->
@@ -11654,13 +11849,13 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                     "P2P group removal failed on attempt $attempt; checking whether the group is already gone",
                 )
             }
-            awaitDownloadP2pDisconnect(manager, attempt, onRemoved)
+            awaitDownloadP2pDisconnect(manager, attempt, onRemoved, onTeardownFailure)
         }
         glassesTeardownScope.launch {
             delay(P2P_GROUP_REMOVE_ACTION_TIMEOUT_MS)
             if (downloadP2pTeardownInProgress && resultHandled.compareAndSet(false, true)) {
                 Log.w("DataDownload", "P2P group removal gave no callback on attempt $attempt; checking group state")
-                awaitDownloadP2pDisconnect(manager, attempt, onRemoved)
+                awaitDownloadP2pDisconnect(manager, attempt, onRemoved, onTeardownFailure)
             }
         }
         try {
@@ -11674,7 +11869,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         } catch (e: Exception) {
             if (resultHandled.compareAndSet(false, true)) {
                 Log.w("DataDownload", "P2P group removal threw on attempt $attempt; checking group state", e)
-                awaitDownloadP2pDisconnect(manager, attempt, onRemoved)
+                awaitDownloadP2pDisconnect(manager, attempt, onRemoved, onTeardownFailure)
             }
         }
     }
@@ -11683,6 +11878,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         manager: WifiP2pManagerSingleton,
         attempt: Int,
         onDisconnected: () -> Unit,
+        onTeardownFailure: () -> Unit,
     ) {
         glassesTeardownScope.launch {
             val deadline = System.currentTimeMillis() + P2P_GROUP_DISCONNECT_TIMEOUT_MS
@@ -11709,9 +11905,15 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                         mapOf("attempt" to attempt.toString(), "p2p_available" to manager.canUseP2p().toString()),
                     )
                     setHeyCyanMediaSyncStage(HeyCyanMediaSyncStage.FAILED, mediaSyncQuarantineReason!!)
+                    onTeardownFailure()
                 } else {
                     Log.w("DataDownload", "P2P group still present after teardown attempt $attempt; retaining the media-sync lease and retrying")
-                    scheduleDownloadP2pRemovalRetry(manager, attempt + 1, onDisconnected)
+                    scheduleDownloadP2pRemovalRetry(
+                        manager,
+                        attempt + 1,
+                        onDisconnected,
+                        onTeardownFailure,
+                    )
                 }
             }
         }
@@ -11721,11 +11923,12 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         manager: WifiP2pManagerSingleton,
         attempt: Int,
         onRemoved: () -> Unit,
+        onTeardownFailure: () -> Unit,
     ) {
         glassesTeardownScope.launch {
             delay(P2P_GROUP_REMOVAL_RETRY_MS)
             if (downloadP2pTeardownInProgress) {
-                removeDownloadP2pGroup(manager, attempt, onRemoved)
+                removeDownloadP2pGroup(manager, attempt, onRemoved, onTeardownFailure)
             }
         }
     }
@@ -11801,6 +12004,12 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private fun showDownloadError(message: String, cleanup: Boolean = true) {
         if (isHighQualityImageTransfer()) {
             finishHighQualityImageFailure(message)
+            return
+        }
+        if (mediaDownloadPurpose == MediaDownloadPurpose.MODEL_CAPTURE) {
+            modelCaptureRequest?.operationId?.let { operationId ->
+                finishModelCaptureFailure(operationId, message)
+            }
             return
         }
         heyCyanTransferLedger?.failUnresolved(message)

@@ -42,6 +42,22 @@ class ModelCapturePresentationTest {
     }
 
     @Test
+    fun syncStartedTransitionsOnlyTheCapturingOperation() {
+        val capturing = reduceModelCapture(
+            ModelCaptureUiState(),
+            ModelCaptureAction.StartModelCapture(firstOperation),
+        )
+
+        assertSame(capturing, reduceModelCapture(capturing, ModelCaptureAction.SyncStarted(secondOperation)))
+
+        val syncing = reduceModelCapture(capturing, ModelCaptureAction.SyncStarted(firstOperation))
+        assertEquals(ModelCapturePhase.SYNCING, syncing.phase)
+        assertEquals(firstOperation, syncing.activeOperationId)
+        assertNull(syncing.finalImageAssetId)
+        assertSame(syncing, reduceModelCapture(syncing, ModelCaptureAction.SyncStarted(firstOperation)))
+    }
+
+    @Test
     fun failureAndCancellationClearAssetAndAreIdempotent() {
         val capturing = reduceModelCapture(
             ModelCaptureUiState(),
@@ -54,6 +70,49 @@ class ModelCapturePresentationTest {
         assertNull(cancelled.finalImageAssetId)
         assertNull(cancelled.activeOperationId)
         assertSame(cancelled, reduceModelCapture(cancelled, ModelCaptureAction.CancelModelCapture(firstOperation)))
+    }
+
+    @Test
+    fun cancellationDuringSyncingPreventsLateTeardownCompletion() {
+        val syncing = reduceModelCapture(
+            reduceModelCapture(
+                ModelCaptureUiState(),
+                ModelCaptureAction.StartModelCapture(firstOperation),
+            ),
+            ModelCaptureAction.CapturePersisted(firstOperation),
+        )
+
+        val cancelled = reduceModelCapture(syncing, ModelCaptureAction.CancelModelCapture(firstOperation))
+
+        assertEquals(ModelCapturePhase.FAILED, cancelled.phase)
+        assertSame(
+            cancelled,
+            reduceModelCapture(cancelled, ModelCaptureAction.Complete(firstOperation, asset)),
+        )
+        assertNull(cancelled.finalImageAssetId)
+    }
+
+    @Test
+    fun failureOnlyAppliesToTheActiveOperationAndLeavesRetryAvailable() {
+        val capturing = reduceModelCapture(
+            ModelCaptureUiState(),
+            ModelCaptureAction.StartModelCapture(firstOperation),
+        )
+
+        assertSame(
+            capturing,
+            reduceModelCapture(capturing, ModelCaptureAction.Fail(secondOperation, "stale callback")),
+        )
+
+        val failed = reduceModelCapture(capturing, ModelCaptureAction.Fail(firstOperation, "download failed"))
+        assertEquals(ModelCapturePhase.FAILED, failed.phase)
+        assertEquals(ModelCaptureDetail.FAILED, failed.detail)
+        assertNull(failed.activeOperationId)
+        assertNull(failed.finalImageAssetId)
+
+        val retry = reduceModelCapture(failed, ModelCaptureAction.StartModelCapture(secondOperation))
+        assertEquals(ModelCapturePhase.CAPTURING, retry.phase)
+        assertEquals(secondOperation, retry.activeOperationId)
     }
 
     @Test
