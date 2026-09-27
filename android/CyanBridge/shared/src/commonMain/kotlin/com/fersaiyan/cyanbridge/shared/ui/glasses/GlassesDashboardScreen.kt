@@ -179,7 +179,7 @@ fun GlassesDashboardScreen(
                     )
                 }
             }
-            item { StatusCard(state) }
+            item { GlassesStatusCard(state) }
             if (state.transfer.isVisible) {
                 item {
                     TransferCard(
@@ -416,51 +416,6 @@ private fun MeetingBanner(label: String, onStop: () -> Unit) {
                 color = MaterialTheme.colorScheme.error,
             )
             TextButton(onClick = onStop) { Text(stringResource(Res.string.dashboard_stop), color = MaterialTheme.colorScheme.error) }
-        }
-    }
-}
-
-@Composable
-private fun StatusCard(state: GlassesDashboardUiState) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            Text(
-                text = stringResource(Res.string.dashboard_glasses_status),
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.primary,
-                fontWeight = FontWeight.Bold,
-            )
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(state.connectionLabel, style = MaterialTheme.typography.titleLarge)
-                    Text(
-                        text = stringResource(Res.string.dashboard_class, state.deviceClassLabel),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                if (state.showBattery || state.showStorage) {
-                    Column(horizontalAlignment = Alignment.End) {
-                        if (state.showBattery) {
-                            Text(
-                                text = state.batteryPercent?.let { stringResource(Res.string.dashboard_battery, it) }
-                                    ?: stringResource(Res.string.dashboard_battery_unknown),
-                                style = MaterialTheme.typography.titleSmall,
-                            )
-                        }
-                        if (state.showStorage) {
-                            Text(
-                                text = stringResource(Res.string.dashboard_storage, state.storageLabel),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                    }
-                }
-            }
         }
     }
 }

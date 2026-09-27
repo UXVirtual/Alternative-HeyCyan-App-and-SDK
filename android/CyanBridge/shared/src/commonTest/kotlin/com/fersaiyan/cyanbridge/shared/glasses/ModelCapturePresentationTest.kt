@@ -5,7 +5,6 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertSame
-import kotlin.test.assertTrue
 
 class ModelCapturePresentationTest {
     private val firstOperation = ModelCaptureOperationId("capture-1")
@@ -37,6 +36,7 @@ class ModelCapturePresentationTest {
 
         val ready = reduceModelCapture(syncing, ModelCaptureAction.Complete(firstOperation, asset))
         assertEquals(ModelCapturePhase.READY, ready.phase)
+        assertEquals(ModelCaptureDetail.IMAGE_READY, ready.detail)
         assertEquals(asset, ready.finalImageAssetId)
         assertNull(ready.activeOperationId)
     }
@@ -50,6 +50,7 @@ class ModelCapturePresentationTest {
         val cancelled = reduceModelCapture(capturing, ModelCaptureAction.CancelModelCapture(firstOperation))
 
         assertEquals(ModelCapturePhase.FAILED, cancelled.phase)
+        assertEquals(ModelCaptureDetail.CANCELLED, cancelled.detail)
         assertNull(cancelled.finalImageAssetId)
         assertNull(cancelled.activeOperationId)
         assertSame(cancelled, reduceModelCapture(cancelled, ModelCaptureAction.CancelModelCapture(firstOperation)))
@@ -61,10 +62,11 @@ class ModelCapturePresentationTest {
         val missing = restoreModelCapture(null)
 
         assertEquals(ModelCapturePhase.READY, restored.phase)
+        assertEquals(ModelCaptureDetail.IMAGE_READY, restored.detail)
         assertEquals(asset, restored.finalImageAssetId)
         assertEquals(ModelCapturePhase.IDLE, missing.phase)
+        assertEquals(ModelCaptureDetail.ASSET_UNAVAILABLE, missing.detail)
         assertNull(missing.finalImageAssetId)
         assertFalse(missing.isInProgress)
-        assertTrue(missing.detail.isNotBlank())
     }
 }

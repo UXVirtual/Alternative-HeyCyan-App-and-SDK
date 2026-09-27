@@ -15,6 +15,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.unit.dp
 import com.fersaiyan.cyanbridge.shared.appearance.AppearanceSettings
 import com.fersaiyan.cyanbridge.shared.billing.ProSubscriptionAction
@@ -31,6 +32,7 @@ import com.fersaiyan.cyanbridge.shared.navigation.isDestinationAvailable
 import com.fersaiyan.cyanbridge.shared.ui.appearance.AppearanceScreen
 import com.fersaiyan.cyanbridge.shared.ui.glasses.GlassesDashboardScreen
 import com.fersaiyan.cyanbridge.shared.ui.glasses.GlassesSyncFlowPickerDialog
+import com.fersaiyan.cyanbridge.shared.ui.glasses.ModelCaptureScreen
 
 /**
  * Root composable for the CyanBridge app.
@@ -48,6 +50,9 @@ fun CyanBridgeApp(
     deviceClass: DeviceClass = DeviceClass.UNKNOWN,
     dashboardState: GlassesDashboardUiState = GlassesDashboardUiState(),
     onDashboardAction: (GlassesDashboardAction) -> Unit = {},
+    modelCaptureImage: ImageBitmap? = null,
+    onStartModelCapture: () -> Unit = {},
+    onCancelModelCapture: () -> Unit = {},
     showSyncFlowPicker: Boolean = false,
     onSyncFlowPickerDismiss: () -> Unit = {},
     onSyncFlowSelected: (GlassesSyncFlow) -> Unit = {},
@@ -97,6 +102,16 @@ fun CyanBridgeApp(
             },
         ) { destination ->
             when (destination) {
+                AppDestination.MODEL_CAPTURE -> {
+                    ModelCaptureScreen(
+                        glassesState = dashboardState,
+                        state = dashboardState.modelCapture,
+                        finalImage = modelCaptureImage,
+                        onStartCapture = onStartModelCapture,
+                        onCancelCapture = onCancelModelCapture,
+                    )
+                }
+
                 AppDestination.GLASSES -> {
                     GlassesDashboardScreen(
                         state = dashboardState,
@@ -116,7 +131,6 @@ fun CyanBridgeApp(
                     }
                 }
 
-                AppDestination.MODEL_CAPTURE,
                 AppDestination.CHATS,
                 AppDestination.MEDIA,
                 AppDestination.PLUGINS,

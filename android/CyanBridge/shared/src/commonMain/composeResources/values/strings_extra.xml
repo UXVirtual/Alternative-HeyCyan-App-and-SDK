@@ -404,6 +404,19 @@
 
     <!-- Dashboard -->
     <string name="dashboard_title">Glasses</string>
+    <string name="model_capture_title">3D Capture</string>
+    <string name="model_capture_detail">Status: %1$s</string>
+    <string name="model_capture_detail_ready_to_capture">Ready to take a picture</string>
+    <string name="model_capture_detail_capturing">Taking picture</string>
+    <string name="model_capture_detail_syncing">Syncing image</string>
+    <string name="model_capture_detail_ready">Image ready</string>
+    <string name="model_capture_detail_cancelled">Capture cancelled</string>
+    <string name="model_capture_detail_asset_unavailable">Saved capture is no longer available</string>
+    <string name="model_capture_detail_failed">Unable to capture image</string>
+    <string name="model_capture_start">Take picture</string>
+    <string name="model_capture_cancel">Cancel capture</string>
+    <string name="model_capture_process">Process into 3D model</string>
+    <string name="model_capture_image_unavailable">The saved image is unavailable for display.</string>
     <string name="dashboard_privileged_adb_title">Privileged ADB risk</string>
     <string name="dashboard_privileged_adb_body">Privileged ADB can brick or erase the glasses. Use only an isolated, recoverable lab device and network. Force-stop the official HeyCyan app first. Stop media sync, OTA, live preview, recording, and automatic capture before continuing. This session is not persistent and stops when this screen leaves the foreground.</string>
     <string name="dashboard_privileged_adb_acknowledge">I explicitly accept the destructive risk and lab-only restrictions.</string>

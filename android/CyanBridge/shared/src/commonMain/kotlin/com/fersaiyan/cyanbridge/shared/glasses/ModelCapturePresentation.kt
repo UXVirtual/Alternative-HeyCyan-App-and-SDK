@@ -24,13 +24,24 @@ enum class ModelCapturePhase {
     FAILED,
 }
 
+/** User-facing capture status values; platform diagnostic text must not reach shared UI. */
+enum class ModelCaptureDetail {
+    READY_TO_CAPTURE,
+    CAPTURING,
+    SYNCING,
+    IMAGE_READY,
+    CANCELLED,
+    ASSET_UNAVAILABLE,
+    FAILED,
+}
+
 /**
  * Platform-neutral state for the 3D capture destination. File paths and decoded
  * images deliberately remain in the Android asset adapter.
  */
 data class ModelCaptureUiState(
     val phase: ModelCapturePhase = ModelCapturePhase.IDLE,
-    val detail: String = IDLE_DETAIL,
+    val detail: ModelCaptureDetail = ModelCaptureDetail.READY_TO_CAPTURE,
     val activeOperationId: ModelCaptureOperationId? = null,
     val finalImageAssetId: ModelCaptureAssetId? = null,
 ) {
@@ -51,14 +62,6 @@ data class ModelCaptureUiState(
 
     val isInProgress: Boolean
         get() = activeOperationId != null
-
-    companion object {
-        const val IDLE_DETAIL = "Ready to take a picture"
-        const val CAPTURING_DETAIL = "Taking picture"
-        const val SYNCING_DETAIL = "Syncing image"
-        const val CANCELLED_DETAIL = "Capture cancelled"
-        const val RESTORE_FAILED_DETAIL = "Saved capture is no longer available"
-    }
 }
 
 sealed interface ModelCaptureAction {
@@ -91,7 +94,7 @@ fun reduceModelCapture(
         } else {
             ModelCaptureUiState(
                 phase = ModelCapturePhase.CAPTURING,
-                detail = ModelCaptureUiState.CAPTURING_DETAIL,
+                detail = ModelCaptureDetail.CAPTURING,
                 activeOperationId = action.operationId,
             )
         }
@@ -99,7 +102,7 @@ fun reduceModelCapture(
 
     is ModelCaptureAction.CancelModelCapture -> {
         if (state.activeOperationId == action.operationId) {
-            failedModelCapture(ModelCaptureUiState.CANCELLED_DETAIL)
+            failedModelCapture(ModelCaptureDetail.CANCELLED)
         } else {
             state
         }
@@ -109,7 +112,7 @@ fun reduceModelCapture(
         if (state.activeOperationId == action.operationId && state.phase == ModelCapturePhase.CAPTURING) {
             state.copy(
                 phase = ModelCapturePhase.SYNCING,
-                detail = ModelCaptureUiState.SYNCING_DETAIL,
+                detail = ModelCaptureDetail.SYNCING,
             )
         } else {
             state
@@ -120,7 +123,7 @@ fun reduceModelCapture(
         if (state.activeOperationId == action.operationId && state.phase == ModelCapturePhase.CAPTURING) {
             state.copy(
                 phase = ModelCapturePhase.SYNCING,
-                detail = ModelCaptureUiState.SYNCING_DETAIL,
+                detail = ModelCaptureDetail.SYNCING,
             )
         } else {
             state
@@ -131,7 +134,7 @@ fun reduceModelCapture(
         if (state.activeOperationId == action.operationId && state.phase == ModelCapturePhase.SYNCING) {
             ModelCaptureUiState(
                 phase = ModelCapturePhase.READY,
-                detail = "Image ready",
+                detail = ModelCaptureDetail.IMAGE_READY,
                 finalImageAssetId = action.finalImageAssetId,
             )
         } else {
@@ -141,7 +144,7 @@ fun reduceModelCapture(
 
     is ModelCaptureAction.Fail -> {
         if (state.activeOperationId == action.operationId) {
-            failedModelCapture(action.detail)
+            failedModelCapture(ModelCaptureDetail.FAILED)
         } else {
             state
         }
@@ -151,16 +154,16 @@ fun reduceModelCapture(
 /** Called only after the platform adapter verifies that the app-managed asset is decodable. */
 fun restoreModelCapture(assetId: ModelCaptureAssetId?): ModelCaptureUiState =
     if (assetId == null) {
-        ModelCaptureUiState(detail = ModelCaptureUiState.RESTORE_FAILED_DETAIL)
+        ModelCaptureUiState(detail = ModelCaptureDetail.ASSET_UNAVAILABLE)
     } else {
         ModelCaptureUiState(
             phase = ModelCapturePhase.READY,
-            detail = "Image ready",
+            detail = ModelCaptureDetail.IMAGE_READY,
             finalImageAssetId = assetId,
         )
     }
 
-private fun failedModelCapture(detail: String): ModelCaptureUiState = ModelCaptureUiState(
+private fun failedModelCapture(detail: ModelCaptureDetail): ModelCaptureUiState = ModelCaptureUiState(
     phase = ModelCapturePhase.FAILED,
-    detail = detail.ifBlank { "Unable to capture image" },
+    detail = detail,
 )
