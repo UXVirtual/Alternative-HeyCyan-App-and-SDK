@@ -38,7 +38,7 @@ class AppearanceModelsTest {
     @Test
     fun navigationDestinationsRemainStable() {
         assertEquals(
-            listOf("GLASSES", "CHATS", "MEDIA", "PLUGINS", "SETTINGS"),
+            listOf("GLASSES", "MODEL_CAPTURE", "CHATS", "MEDIA", "PLUGINS", "SETTINGS"),
             AppDestination.entries.map { it.name },
         )
     }

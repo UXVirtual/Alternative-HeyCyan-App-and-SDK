@@ -72,6 +72,7 @@ fun SharedDestinationScreen(
     }
 
     when (destination) {
+        AppDestination.MODEL_CAPTURE -> Unit
         AppDestination.CHATS -> SharedChatsDestination(onDestinationSelected)
         AppDestination.MEDIA -> SharedMediaDestination(onDestinationSelected)
         AppDestination.PLUGINS -> SharedPluginsDestination(onDestinationSelected)

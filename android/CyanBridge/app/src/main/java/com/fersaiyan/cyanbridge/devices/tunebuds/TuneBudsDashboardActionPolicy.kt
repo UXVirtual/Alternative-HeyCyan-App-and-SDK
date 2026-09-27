@@ -39,6 +39,8 @@ internal fun GlassesDashboardAction.isSupportedForTuneBudsDashboard(): Boolean =
     is GlassesDashboardAction.SetWearingDetection,
     is GlassesDashboardAction.SetVideoRecordingDuration,
     is GlassesDashboardAction.SetAudioRecordingDuration,
+    is GlassesDashboardAction.StartModelCapture,
+    is GlassesDashboardAction.CancelModelCapture,
     GlassesDashboardAction.RequestVolume,
     GlassesDashboardAction.AddDeviceListener,
     GlassesDashboardAction.StartClassicBluetoothScan,

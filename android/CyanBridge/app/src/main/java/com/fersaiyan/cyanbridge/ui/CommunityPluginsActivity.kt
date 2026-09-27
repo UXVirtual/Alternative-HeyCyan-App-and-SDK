@@ -301,6 +301,7 @@ class CommunityPluginsActivity : AppCompatActivity() {
                         startActivity(Intent(this, PublishPluginActivity::class.java))
                     },
                     onDestinationSelected = ::navigateTo,
+                    deviceClass = DeviceProfileStore.selectedClass(this@CommunityPluginsActivity),
                 )
             }
         }
@@ -687,6 +688,9 @@ class CommunityPluginsActivity : AppCompatActivity() {
     private fun navigateTo(destination: AppDestination) {
         val target = when (destination) {
             AppDestination.GLASSES -> Intent(this, MainActivity::class.java)
+            AppDestination.MODEL_CAPTURE -> Intent(this, MainActivity::class.java).apply {
+                putExtra(MainActivity.EXTRA_INITIAL_DESTINATION, destination.name)
+            }
             AppDestination.CHATS -> buildRecentChatIntent()
             AppDestination.MEDIA -> Intent(this, RecordingsListActivity::class.java)
             AppDestination.PLUGINS -> return

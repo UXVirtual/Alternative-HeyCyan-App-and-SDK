@@ -49,7 +49,9 @@ import com.fersaiyan.cyanbridge.shared.generated.resources.chat_delete_title
 import com.fersaiyan.cyanbridge.shared.generated.resources.chat_no_chats
 import com.fersaiyan.cyanbridge.shared.generated.resources.chat_recent_conversations
 import com.fersaiyan.cyanbridge.shared.generated.resources.chat_start_with_add
+import com.fersaiyan.cyanbridge.shared.devices.DeviceClass
 import com.fersaiyan.cyanbridge.shared.generated.resources.nav_chats
+import com.fersaiyan.cyanbridge.shared.ui.CyanBridgeNavigationSuite
 import com.fersaiyan.cyanbridge.shared.ui.localizedDestinationLabel
 import org.jetbrains.compose.resources.ExperimentalResourceApi
 import org.jetbrains.compose.resources.stringResource
@@ -67,8 +69,15 @@ fun ChatListScreen(
     onNewChat: () -> Unit,
     onChatAppearance: () -> Unit,
     onDestinationSelected: (AppDestination) -> Unit,
+    deviceClass: DeviceClass = DeviceClass.UNKNOWN,
 ) {
+    CyanBridgeNavigationSuite(
+        currentDestination = AppDestination.CHATS,
+        deviceClass = deviceClass,
+        onNavigate = onDestinationSelected,
+    ) { navigationPadding ->
     Scaffold(
+        modifier = Modifier.padding(navigationPadding),
         contentWindowInsets = WindowInsets.safeDrawing,
         topBar = {
             TopAppBar(
@@ -82,23 +91,6 @@ fun ChatListScreen(
                     }
                 },
             )
-        },
-        bottomBar = {
-            NavigationBar {
-                AppDestination.entries.forEach { destination ->
-                    NavigationBarItem(
-                        selected = destination == AppDestination.CHATS,
-                        onClick = { onDestinationSelected(destination) },
-                        icon = {
-                            Icon(
-                                imageVector = destination.icon.imageVector(),
-                                contentDescription = null,
-                            )
-                        },
-                         label = { Text(localizedDestinationLabel(destination)) },
-                    )
-                }
-            }
         },
         floatingActionButton = {
             FloatingActionButton(onClick = onNewChat) {
@@ -162,6 +154,7 @@ fun ChatListScreen(
                 }
             }
         }
+    }
     }
 
     if (pendingDelete != null) {

@@ -52,6 +52,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.text.KeyboardOptions
 import com.fersaiyan.cyanbridge.shared.generated.resources.*
+import com.fersaiyan.cyanbridge.shared.devices.DeviceClass
 import com.fersaiyan.cyanbridge.shared.navigation.AppDestination
 import com.fersaiyan.cyanbridge.shared.navigation.icon
 import com.fersaiyan.cyanbridge.shared.icons.imageVector
@@ -63,6 +64,7 @@ import com.fersaiyan.cyanbridge.shared.settings.SettingsSection
 import org.jetbrains.compose.resources.ExperimentalResourceApi
 import org.jetbrains.compose.resources.stringResource
 import com.fersaiyan.cyanbridge.shared.ui.localizedDestinationLabel
+import com.fersaiyan.cyanbridge.shared.ui.CyanBridgeNavigationSuite
 import com.fersaiyan.cyanbridge.shared.ui.localizedProviderLabel
 
 data class SettingsUiState(
@@ -132,28 +134,18 @@ fun SettingsScreen(
     expandedSections: Set<SettingsSection>,
     onToggleSection: (SettingsSection) -> Unit,
     actions: SettingsScreenActions,
+    deviceClass: DeviceClass = DeviceClass.UNKNOWN,
 ) {
+    CyanBridgeNavigationSuite(
+        currentDestination = AppDestination.SETTINGS,
+        deviceClass = deviceClass,
+        onNavigate = actions::onDestinationSelected,
+    ) { navigationPadding ->
     Scaffold(
+        modifier = Modifier.padding(navigationPadding),
         contentWindowInsets = WindowInsets.safeDrawing,
         topBar = {
             TopAppBar(title = { Text(stringResource(Res.string.settings_title)) })
-        },
-        bottomBar = {
-            NavigationBar {
-                AppDestination.entries.forEach { destination ->
-                    NavigationBarItem(
-                        selected = destination == AppDestination.SETTINGS,
-                        onClick = { actions.onDestinationSelected(destination) },
-                        icon = {
-                            Icon(
-                                imageVector = destination.icon.imageVector(),
-                                contentDescription = null,
-                            )
-                        },
-                        label = { Text(localizedDestinationLabel(destination)) },
-                    )
-                }
-            }
         },
     ) { innerPadding ->
         LazyColumn(
@@ -267,6 +259,7 @@ fun SettingsScreen(
                 }
             }
         }
+    }
     }
 }
 

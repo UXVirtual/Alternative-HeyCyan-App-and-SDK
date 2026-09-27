@@ -42,6 +42,7 @@ import com.fersaiyan.cyanbridge.ai.router.AiProviderType
 import com.fersaiyan.cyanbridge.ai.router.AiAssistantRouter as RelayAiAssistantRouter
 import com.fersaiyan.cyanbridge.shared.chat.ChatRole
 import com.fersaiyan.cyanbridge.chat.ChatStore
+import com.fersaiyan.cyanbridge.devices.DeviceProfileStore
 import com.fersaiyan.cyanbridge.chat.ChatStoreRepository
 import com.fersaiyan.cyanbridge.localagent.LocalAgentPrefs
 import com.fersaiyan.cyanbridge.localagent.context.LocalAgentContextBuilder
@@ -232,6 +233,7 @@ class ChatThreadActivity : AppCompatActivity() {
                     onRecordAudio = ::toggleAudioRecording,
                     onClearAttachments = ::clearPendingAttachments,
                     onDestinationSelected = ::navigateTo,
+                    deviceClass = DeviceProfileStore.selectedClass(this@ChatThreadActivity),
                 )
                 if (chatAppearanceMenuVisible) {
                     ChatAppearanceMenuDialog(
@@ -2590,6 +2592,9 @@ class ChatThreadActivity : AppCompatActivity() {
             }
 
             AppDestination.GLASSES -> Intent(this, MainActivity::class.java)
+            AppDestination.MODEL_CAPTURE -> Intent(this, MainActivity::class.java).apply {
+                putExtra(MainActivity.EXTRA_INITIAL_DESTINATION, destination.name)
+            }
             AppDestination.MEDIA -> Intent(this, com.fersaiyan.cyanbridge.ui.recordings.RecordingsListActivity::class.java)
             AppDestination.PLUGINS -> Intent(this, CommunityPluginsActivity::class.java)
             AppDestination.SETTINGS -> Intent(this, SettingsActivity::class.java)

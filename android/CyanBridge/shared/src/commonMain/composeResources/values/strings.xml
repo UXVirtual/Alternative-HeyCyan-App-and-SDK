@@ -29,6 +29,7 @@
     <string name="plugin_selected">Selected</string>
     <string name="native_plugins_section">Native Plugins</string>
     <string name="native_plugin_settings">Settings</string>
+    <string name="nav_model_capture">3D Capture</string>
 
     <!-- First-run onboarding -->
     <string name="onboarding_language_title">Choose your app language</string>

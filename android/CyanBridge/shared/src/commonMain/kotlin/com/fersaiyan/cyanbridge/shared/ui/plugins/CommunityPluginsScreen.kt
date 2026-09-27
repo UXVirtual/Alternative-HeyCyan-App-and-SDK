@@ -54,6 +54,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.fersaiyan.cyanbridge.shared.generated.resources.*
+import com.fersaiyan.cyanbridge.shared.devices.DeviceClass
 import com.fersaiyan.cyanbridge.shared.icons.imageVector
 import com.fersaiyan.cyanbridge.shared.navigation.AppDestination
 import com.fersaiyan.cyanbridge.shared.navigation.icon
@@ -61,6 +62,7 @@ import com.fersaiyan.cyanbridge.shared.plugins.CommunityPluginCardData
 import com.fersaiyan.cyanbridge.shared.plugins.NativePluginCardData
 import com.fersaiyan.cyanbridge.shared.plugins.PluginTimeWindow
 import com.fersaiyan.cyanbridge.shared.ui.localizedDestinationLabel
+import com.fersaiyan.cyanbridge.shared.ui.CyanBridgeNavigationSuite
 import kotlin.math.floor
 import org.jetbrains.compose.resources.ExperimentalResourceApi
 import org.jetbrains.compose.resources.stringResource
@@ -76,6 +78,7 @@ fun CommunityPluginsScreen(
     onOpenCommunityPlugin: (CommunityPluginCardData) -> Unit = {},
     onPublishPlugin: () -> Unit,
     onDestinationSelected: (AppDestination) -> Unit,
+    deviceClass: DeviceClass = DeviceClass.UNKNOWN,
     nativePlugins: List<NativePluginCardData> = emptyList(),
     onOpenNativePluginSettings: (String) -> Unit = {},
     onToggleNativePlugin: (String, Boolean) -> Unit = { _, _ -> },
@@ -90,7 +93,13 @@ fun CommunityPluginsScreen(
     val topVoted = plugins.sortedByDescending { it.votes(selectedWindow) }.take(4)
     val topDownloaded = plugins.sortedByDescending { it.downloads(selectedWindow) }.take(4)
 
+    CyanBridgeNavigationSuite(
+        currentDestination = AppDestination.PLUGINS,
+        deviceClass = deviceClass,
+        onNavigate = onDestinationSelected,
+    ) { navigationPadding ->
     Scaffold(
+        modifier = Modifier.padding(navigationPadding),
         contentWindowInsets = WindowInsets.safeDrawing,
         topBar = {
             TopAppBar(
@@ -105,23 +114,6 @@ fun CommunityPluginsScreen(
                     }
                 },
             )
-        },
-        bottomBar = {
-            NavigationBar {
-                AppDestination.entries.forEach { destination ->
-                    NavigationBarItem(
-                        selected = destination == AppDestination.PLUGINS,
-                        onClick = { onDestinationSelected(destination) },
-                        icon = {
-                            Icon(
-                                imageVector = destination.icon.imageVector(),
-                                contentDescription = null,
-                            )
-                        },
-                        label = { Text(localizedDestinationLabel(destination)) },
-                    )
-                }
-            }
         },
         floatingActionButton = {
             FloatingActionButton(onClick = onPublishPlugin) {
@@ -234,6 +226,7 @@ fun CommunityPluginsScreen(
                 )
             }
         }
+    }
     }
 
     plugins.firstOrNull { it.title == detailsPluginTitle }?.let { plugin ->

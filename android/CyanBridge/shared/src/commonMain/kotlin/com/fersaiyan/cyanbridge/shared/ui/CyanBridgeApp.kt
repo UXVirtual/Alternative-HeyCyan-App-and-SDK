@@ -20,12 +20,14 @@ import com.fersaiyan.cyanbridge.shared.appearance.AppearanceSettings
 import com.fersaiyan.cyanbridge.shared.billing.ProSubscriptionAction
 import com.fersaiyan.cyanbridge.shared.billing.ProSubscriptionUiState
 import com.fersaiyan.cyanbridge.shared.billing.unavailableProSubscriptionStatus
+import com.fersaiyan.cyanbridge.shared.devices.DeviceClass
 import com.fersaiyan.cyanbridge.shared.glasses.GlassesDashboardAction
 import com.fersaiyan.cyanbridge.shared.glasses.GlassesDashboardUiState
 import com.fersaiyan.cyanbridge.shared.glasses.GlassesSyncFlow
 import com.fersaiyan.cyanbridge.shared.generated.resources.Res
 import com.fersaiyan.cyanbridge.shared.generated.resources.action_open
 import com.fersaiyan.cyanbridge.shared.navigation.AppDestination
+import com.fersaiyan.cyanbridge.shared.navigation.isDestinationAvailable
 import com.fersaiyan.cyanbridge.shared.ui.appearance.AppearanceScreen
 import com.fersaiyan.cyanbridge.shared.ui.glasses.GlassesDashboardScreen
 import com.fersaiyan.cyanbridge.shared.ui.glasses.GlassesSyncFlowPickerDialog
@@ -43,6 +45,7 @@ import com.fersaiyan.cyanbridge.shared.ui.glasses.GlassesSyncFlowPickerDialog
 @Composable
 fun CyanBridgeApp(
     initialDestination: AppDestination = AppDestination.GLASSES,
+    deviceClass: DeviceClass = DeviceClass.UNKNOWN,
     dashboardState: GlassesDashboardUiState = GlassesDashboardUiState(),
     onDashboardAction: (GlassesDashboardAction) -> Unit = {},
     showSyncFlowPicker: Boolean = false,
@@ -56,7 +59,12 @@ fun CyanBridgeApp(
     proSubscriptionState: ProSubscriptionUiState = ProSubscriptionUiState(),
     onProSubscriptionAction: (ProSubscriptionAction) -> String = ::unavailableProSubscriptionStatus,
 ) {
-    var currentDestination by remember(initialDestination) { mutableStateOf(initialDestination) }
+    var currentDestination by remember(initialDestination, deviceClass) {
+        mutableStateOf(
+            initialDestination.takeIf { isDestinationAvailable(it, deviceClass) }
+                ?: AppDestination.GLASSES,
+        )
+    }
     var showAppearance by remember { mutableStateOf(false) }
     var localAppearance by remember(appearanceSettings) { mutableStateOf(appearanceSettings) }
 
@@ -77,6 +85,7 @@ fun CyanBridgeApp(
     } else {
         CyanBridgeNavShell(
             currentDestination = currentDestination,
+            deviceClass = deviceClass,
             onNavigate = { destination ->
                 if (useSharedDestinations) {
                     currentDestination = destination
@@ -107,6 +116,7 @@ fun CyanBridgeApp(
                     }
                 }
 
+                AppDestination.MODEL_CAPTURE,
                 AppDestination.CHATS,
                 AppDestination.MEDIA,
                 AppDestination.PLUGINS,

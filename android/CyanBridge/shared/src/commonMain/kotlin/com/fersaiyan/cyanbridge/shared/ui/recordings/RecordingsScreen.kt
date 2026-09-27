@@ -71,11 +71,13 @@ import com.fersaiyan.cyanbridge.shared.recordings.RecordingItem
 import com.fersaiyan.cyanbridge.shared.recordings.SyncedMediaItem
 import com.fersaiyan.cyanbridge.shared.recordings.TranscriptDialogUiState
 import com.fersaiyan.cyanbridge.shared.recordings.TranscriptionProgressUiState
+import com.fersaiyan.cyanbridge.shared.devices.DeviceClass
 import com.fersaiyan.cyanbridge.shared.navigation.AppDestination
 import com.fersaiyan.cyanbridge.shared.navigation.icon
 import com.fersaiyan.cyanbridge.shared.icons.imageVector
 import com.fersaiyan.cyanbridge.shared.generated.resources.*
 import com.fersaiyan.cyanbridge.shared.ui.localizedDestinationLabel
+import com.fersaiyan.cyanbridge.shared.ui.CyanBridgeNavigationSuite
 import org.jetbrains.compose.resources.ExperimentalResourceApi
 import org.jetbrains.compose.resources.stringResource
 
@@ -101,6 +103,7 @@ fun RecordingsScreen(
     onDeleteItems: suspend (List<RecordingItem>) -> Set<Long> = { emptySet() },
     onDismissTranscript: () -> Unit,
     onDestinationSelected: (AppDestination) -> Unit = {},
+    deviceClass: DeviceClass = DeviceClass.UNKNOWN,
 ) {
     var selectionMode by remember { mutableStateOf(false) }
     var selectedSessionIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
@@ -117,7 +120,13 @@ fun RecordingsScreen(
     val allSelectableSessionsSelected =
         selectableSessionIds.isNotEmpty() && selectedSessionIds.containsAll(selectableSessionIds)
 
+    CyanBridgeNavigationSuite(
+        currentDestination = AppDestination.MEDIA,
+        deviceClass = deviceClass,
+        onNavigate = onDestinationSelected,
+    ) { navigationPadding ->
     Scaffold(
+        modifier = Modifier.padding(navigationPadding),
         contentWindowInsets = WindowInsets.safeDrawing,
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
@@ -187,23 +196,6 @@ fun RecordingsScreen(
                     }
                 },
             )
-        },
-        bottomBar = {
-            NavigationBar {
-                AppDestination.entries.forEach { destination ->
-                    NavigationBarItem(
-                        selected = destination == AppDestination.MEDIA,
-                        onClick = { onDestinationSelected(destination) },
-                        icon = {
-                            Icon(
-                                imageVector = destination.icon.imageVector(),
-                                contentDescription = null,
-                            )
-                        },
-                         label = { Text(localizedDestinationLabel(destination)) },
-                    )
-                }
-            }
         },
     ) { innerPadding ->
         LazyColumn(
@@ -327,6 +319,7 @@ fun RecordingsScreen(
                 }
             }
         }
+    }
     }
 
     deletionFeedback?.let { feedback ->

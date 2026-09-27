@@ -35,6 +35,7 @@ import com.fersaiyan.cyanbridge.shared.generated.resources.memory_private_local_
 import com.fersaiyan.cyanbridge.shared.generated.resources.nav_chats
 import com.fersaiyan.cyanbridge.shared.generated.resources.nav_glasses
 import com.fersaiyan.cyanbridge.shared.generated.resources.nav_media
+import com.fersaiyan.cyanbridge.shared.generated.resources.nav_model_capture
 import com.fersaiyan.cyanbridge.shared.generated.resources.nav_plugins
 import com.fersaiyan.cyanbridge.shared.generated.resources.nav_settings
 import com.fersaiyan.cyanbridge.shared.generated.resources.ota_source_debug
@@ -78,6 +79,7 @@ import org.jetbrains.compose.resources.stringResource
 fun localizedDestinationLabel(destination: AppDestination): String = stringResource(
     when (destination) {
         AppDestination.GLASSES -> Res.string.nav_glasses
+        AppDestination.MODEL_CAPTURE -> Res.string.nav_model_capture
         AppDestination.CHATS -> Res.string.nav_chats
         AppDestination.MEDIA -> Res.string.nav_media
         AppDestination.PLUGINS -> Res.string.nav_plugins
@@ -90,6 +92,7 @@ fun localizedDestinationLabel(destination: AppDestination): String = stringResou
 fun localizedDestinationSubtitle(destination: AppDestination): String = stringResource(
     when (destination) {
         AppDestination.GLASSES -> Res.string.destination_glasses_subtitle
+        AppDestination.MODEL_CAPTURE -> Res.string.nav_model_capture
         AppDestination.CHATS -> Res.string.destination_chats_subtitle
         AppDestination.MEDIA -> Res.string.destination_media_subtitle
         AppDestination.PLUGINS -> Res.string.destination_plugins_subtitle

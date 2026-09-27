@@ -62,6 +62,7 @@ import com.fersaiyan.cyanbridge.shared.chat.DailySummaryProgressUiState
 import com.fersaiyan.cyanbridge.shared.chat.ChatMessage
 import com.fersaiyan.cyanbridge.shared.chat.ChatRole
 import com.fersaiyan.cyanbridge.shared.chat.ChatThreadUiState
+import com.fersaiyan.cyanbridge.shared.devices.DeviceClass
 import com.fersaiyan.cyanbridge.shared.icons.AppIcon
 import com.fersaiyan.cyanbridge.shared.navigation.AppDestination
 import com.fersaiyan.cyanbridge.shared.icons.imageVector
@@ -83,6 +84,7 @@ import com.fersaiyan.cyanbridge.shared.generated.resources.chat_stop_generation
 import com.fersaiyan.cyanbridge.shared.generated.resources.chat_thinking
 import com.fersaiyan.cyanbridge.shared.generated.resources.action_send
 import com.fersaiyan.cyanbridge.shared.ui.localizedDestinationLabel
+import com.fersaiyan.cyanbridge.shared.ui.CyanBridgeNavigationSuite
 import org.jetbrains.compose.resources.ExperimentalResourceApi
 import org.jetbrains.compose.resources.stringResource
 import kotlinx.coroutines.flow.collect
@@ -113,10 +115,15 @@ fun ChatThreadScreen(
     onRecordAudio: () -> Unit,
     onClearAttachments: () -> Unit,
     onDestinationSelected: (AppDestination) -> Unit,
+    deviceClass: DeviceClass = DeviceClass.UNKNOWN,
 ) {
-    val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
-
+    CyanBridgeNavigationSuite(
+        currentDestination = AppDestination.CHATS,
+        deviceClass = deviceClass,
+        onNavigate = onDestinationSelected,
+    ) { navigationPadding ->
     Scaffold(
+        modifier = Modifier.padding(navigationPadding),
         contentWindowInsets = WindowInsets.safeDrawing,
         topBar = {
             TopAppBar(
@@ -162,9 +169,6 @@ fun ChatThreadScreen(
                     onClearAttachments = onClearAttachments,
                     modifier = Modifier.imePadding(),
                 )
-                if (!imeVisible) {
-                    ChatNavigationBar(onDestinationSelected = onDestinationSelected)
-                }
             }
         },
     ) { innerPadding ->
@@ -189,8 +193,8 @@ fun ChatThreadScreen(
             )
         }
     }
+    }
 }
-
 @Composable
 private fun ChatThreadStatus(
     modelBadge: String?,
@@ -317,7 +321,6 @@ private fun ChatTimeline(
         }
     }
 }
-
 @Composable
 private fun EmptyConversation(modifier: Modifier = Modifier) {
     Column(
@@ -524,25 +527,6 @@ private fun ChatComposer(
                     )
                 }
             }
-        }
-    }
-}
-
-@Composable
-private fun ChatNavigationBar(onDestinationSelected: (AppDestination) -> Unit) {
-    NavigationBar {
-        AppDestination.entries.forEach { destination ->
-            NavigationBarItem(
-                selected = destination == AppDestination.CHATS,
-                onClick = { onDestinationSelected(destination) },
-                icon = {
-                    Icon(
-                        imageVector = destination.icon.imageVector(),
-                        contentDescription = null,
-                    )
-                },
-                 label = { Text(localizedDestinationLabel(destination)) },
-            )
         }
     }
 }

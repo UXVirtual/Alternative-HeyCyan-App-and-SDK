@@ -52,6 +52,7 @@ data class GlassesDashboardUiState(
     val advancedExpanded: Boolean = false,
     val agentStatus: String = "Unknown",
     val agentLastError: String = "(none)",
+    val modelCapture: ModelCaptureUiState = ModelCaptureUiState(),
     val metaRayban: MetaRaybanUiState = MetaRaybanUiState(),
     val meizuMyvu: MeizuMyvuUiState = MeizuMyvuUiState(),
     val ota: OtaSectionUiState = OtaSectionUiState(),
@@ -388,6 +389,8 @@ sealed interface GlassesDashboardAction {
     data class SetAudioRecordingDuration(val seconds: Int) : GlassesDashboardAction
     data object TestVoiceQuestion : GlassesDashboardAction
     data object TestImageQuestion : GlassesDashboardAction
+    data class StartModelCapture(val operationId: ModelCaptureOperationId) : GlassesDashboardAction
+    data class CancelModelCapture(val operationId: ModelCaptureOperationId) : GlassesDashboardAction
     data object CaptureAndPreviewGlassesImage : GlassesDashboardAction
     data object PreviewLastGlassesImage : GlassesDashboardAction
     data object SaveFullResGlassesImage : GlassesDashboardAction

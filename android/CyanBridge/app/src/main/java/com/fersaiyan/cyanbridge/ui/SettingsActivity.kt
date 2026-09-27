@@ -41,6 +41,7 @@ import com.fersaiyan.cyanbridge.localmodels.remote.RemoteOpenAiClient
 import com.fersaiyan.cyanbridge.localmodels.session.LocalChatSessionManager
 import com.fersaiyan.cyanbridge.shared.chat.ChatRole
 import com.fersaiyan.cyanbridge.chat.ChatStore
+import com.fersaiyan.cyanbridge.devices.DeviceProfileStore
 import com.fersaiyan.cyanbridge.localagent.memory.LocalAgentMemoryStore
 import com.fersaiyan.cyanbridge.memoryvault.MemoryModeManager
 import com.fersaiyan.cyanbridge.shared.settings.MemoryPrivacyMode
@@ -128,6 +129,7 @@ class SettingsActivity : AppCompatActivity(), SettingsScreenActions {
                     expandedSections = expandedSections,
                     onToggleSection = ::toggleSection,
                     actions = this@SettingsActivity,
+                    deviceClass = DeviceProfileStore.selectedClass(this@SettingsActivity),
                 )
             }
         }
@@ -237,6 +239,9 @@ class SettingsActivity : AppCompatActivity(), SettingsScreenActions {
     override fun onDestinationSelected(destination: AppDestination) {
         val target = when (destination) {
             AppDestination.GLASSES -> Intent(this, MainActivity::class.java)
+            AppDestination.MODEL_CAPTURE -> Intent(this, MainActivity::class.java).apply {
+                putExtra(MainActivity.EXTRA_INITIAL_DESTINATION, destination.name)
+            }
             AppDestination.CHATS -> buildRecentChatIntent()
             AppDestination.MEDIA -> Intent(this, RecordingsListActivity::class.java)
             AppDestination.PLUGINS -> Intent(this, CommunityPluginsActivity::class.java)

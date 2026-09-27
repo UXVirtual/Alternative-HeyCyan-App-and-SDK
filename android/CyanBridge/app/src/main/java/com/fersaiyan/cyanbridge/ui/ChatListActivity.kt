@@ -18,6 +18,7 @@ import com.fersaiyan.cyanbridge.agent.LocalAgentPrefs as AutomationPrefs
 import com.fersaiyan.cyanbridge.ai.router.AiProviderPrefs
 import com.fersaiyan.cyanbridge.ai.router.AiProviderType
 import com.fersaiyan.cyanbridge.chat.ChatStore
+import com.fersaiyan.cyanbridge.devices.DeviceProfileStore
 import com.fersaiyan.cyanbridge.localagent.dailyfacts.DailyFactsReviewThreadStore
 import com.fersaiyan.cyanbridge.localmodels.remote.RemoteOpenAiPrefs
 import com.fersaiyan.cyanbridge.localmodels.storage.LocalModelStorageRepository
@@ -85,6 +86,7 @@ class ChatListActivity : AppCompatActivity() {
                     },
                     onChatAppearance = ::showChatAppearanceMenu,
                     onDestinationSelected = ::navigateTo,
+                    deviceClass = DeviceProfileStore.selectedClass(this@ChatListActivity),
                 )
                 if (chatAppearanceMenuVisible) {
                     ChatAppearanceMenuDialog(
@@ -157,6 +159,9 @@ class ChatListActivity : AppCompatActivity() {
     private fun navigateTo(destination: AppDestination) {
         val target = when (destination) {
             AppDestination.GLASSES -> Intent(this, MainActivity::class.java)
+            AppDestination.MODEL_CAPTURE -> Intent(this, MainActivity::class.java).apply {
+                putExtra(MainActivity.EXTRA_INITIAL_DESTINATION, destination.name)
+            }
             AppDestination.CHATS -> buildRecentChatIntent()
             AppDestination.MEDIA -> Intent(this, com.fersaiyan.cyanbridge.ui.recordings.RecordingsListActivity::class.java)
             AppDestination.PLUGINS -> Intent(this, CommunityPluginsActivity::class.java)

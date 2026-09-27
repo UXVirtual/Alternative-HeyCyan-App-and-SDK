@@ -31,6 +31,7 @@ import com.fersaiyan.cyanbridge.audio.MeetingCapturePrefs
 import com.fersaiyan.cyanbridge.audio.MeetingCaptureService
 import com.fersaiyan.cyanbridge.shared.chat.ChatRole
 import com.fersaiyan.cyanbridge.chat.ChatStore
+import com.fersaiyan.cyanbridge.devices.DeviceProfileStore
 import com.fersaiyan.cyanbridge.data.local.entity.CaptureSession
 import com.fersaiyan.cyanbridge.localagent.userfacts.TranscriptCandidateFactsAppender
 import com.fersaiyan.cyanbridge.privacy.PrivacyPrefs
@@ -121,6 +122,7 @@ class RecordingsListActivity : AppCompatActivity() {
                      onDeleteItems = ::deleteMeetingCaptures,
                      onDismissTranscript = { transcriptDialog = null },
                      onDestinationSelected = ::navigateTo,
+                     deviceClass = DeviceProfileStore.selectedClass(this@RecordingsListActivity),
                  )
             }
         }
@@ -214,6 +216,9 @@ class RecordingsListActivity : AppCompatActivity() {
     private fun navigateTo(destination: AppDestination) {
         val target = when (destination) {
             AppDestination.GLASSES -> Intent(this, MainActivity::class.java)
+            AppDestination.MODEL_CAPTURE -> Intent(this, MainActivity::class.java).apply {
+                putExtra(MainActivity.EXTRA_INITIAL_DESTINATION, destination.name)
+            }
             AppDestination.CHATS -> buildRecentChatIntent()
             AppDestination.MEDIA -> return
             AppDestination.PLUGINS -> Intent(this, CommunityPluginsActivity::class.java)

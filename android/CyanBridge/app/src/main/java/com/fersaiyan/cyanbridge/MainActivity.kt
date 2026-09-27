@@ -250,6 +250,10 @@ import com.fersaiyan.cyanbridge.shared.glasses.GlassesAssistantMode
 import com.fersaiyan.cyanbridge.shared.glasses.AiWakeWordRoute
 import com.fersaiyan.cyanbridge.shared.glasses.GlassesDashboardAction
 import com.fersaiyan.cyanbridge.shared.glasses.GlassesDashboardUiState
+import com.fersaiyan.cyanbridge.modelcapture.ModelCaptureAssetRepository
+import com.fersaiyan.cyanbridge.shared.glasses.ModelCaptureAction
+import com.fersaiyan.cyanbridge.shared.glasses.ModelCapturePhase
+import com.fersaiyan.cyanbridge.shared.glasses.reduceModelCapture
 import com.fersaiyan.cyanbridge.shared.glasses.FirmwarePatchRequestUiState
 import com.fersaiyan.cyanbridge.shared.glasses.GlassesSyncFlow
 import com.fersaiyan.cyanbridge.shared.glasses.GlassesTransferUiState
@@ -298,6 +302,7 @@ import kotlinx.coroutines.flow.merge
 
 
 class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
+    private var initialDestination by mutableStateOf(AppDestination.GLASSES)
     private var tts: TextToSpeech? = null
     private var ttsReady = false
     private val localSpeechSessionManager by lazy {
@@ -506,6 +511,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         }
     }
     companion object {
+        const val EXTRA_INITIAL_DESTINATION = "initial_destination"
         const val EXTRA_TASKER_COMMAND = "tasker_command"
         const val EXTRA_START_META_IMAGE_QUESTION = "start_meta_image_question"
         private const val TAG = "MainActivity"
@@ -565,6 +571,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             wifiAdbDebug = WifiAdbDebugUiState(isAvailable = false),
         ),
     )
+    private val modelCaptureAssets by lazy { ModelCaptureAssetRepository(this) }
     private var showDownloadFlowPicker by mutableStateOf(false)
     private val deviceNotifyListener by lazy { MyDeviceNotifyListener() }
     private var otaSessionLease: GlassesSessionLease? = null
@@ -793,6 +800,8 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        dashboardState = dashboardState.copy(modelCapture = modelCaptureAssets.restoreUiState())
+        initialDestination = destinationFromIntent(intent)
         binding = AcitivytMainBinding.inflate(layoutInflater)
         aiAssistantMode = when (AutomationPrefs.getGlassesAssistantMode(this)) {
             GlassesAssistantMode.PHONE_ASSISTANT -> AI_MODE_PHONE_ASSISTANT
@@ -811,6 +820,8 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             val appearance by rememberAppearanceSettings(appearancePreferences)
             CyanBridgeTheme(appearance) {
                 CyanBridgeApp(
+                    initialDestination = initialDestination,
+                    deviceClass = DeviceProfileStore.selectedClass(this@MainActivity),
                     dashboardState = dashboardState,
                     onDashboardAction = ::handleDashboardAction,
                     showSyncFlowPicker = showDownloadFlowPicker,
@@ -1174,6 +1185,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        initialDestination = destinationFromIntent(intent)
         if (handleMetaRegistrationIntent(intent)) {
             updateMetaRaybanUiState()
         }
@@ -1881,6 +1893,20 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         return true
     }
 
+    private fun dispatchModelCapture(action: ModelCaptureAction) {
+        val currentState = dashboardState.modelCapture
+        val updatedState = reduceModelCapture(currentState, action)
+        if (updatedState === currentState) return
+
+        if (
+            action is ModelCaptureAction.StartModelCapture ||
+            updatedState.phase == ModelCapturePhase.FAILED
+        ) {
+            modelCaptureAssets.clearPersistedAsset()
+        }
+        updateDashboardState { state -> state.copy(modelCapture = updatedState) }
+    }
+
     private fun handleDashboardAction(action: GlassesDashboardAction) {
         if (isDashboardActionBlockedByExclusiveSession(action)) return
         if (isTuneBudsSelected() && !action.isSupportedForTuneBudsDashboard()) {
@@ -1971,6 +1997,12 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             }
             GlassesDashboardAction.TestVoiceQuestion -> binding.btnTestHijackVoice.performClick()
             GlassesDashboardAction.TestImageQuestion -> binding.btnTestHijackImage.performClick()
+            is GlassesDashboardAction.StartModelCapture -> {
+                dispatchModelCapture(ModelCaptureAction.StartModelCapture(action.operationId))
+            }
+            is GlassesDashboardAction.CancelModelCapture -> {
+                dispatchModelCapture(ModelCaptureAction.CancelModelCapture(action.operationId))
+            }
             GlassesDashboardAction.CaptureAndPreviewGlassesImage -> previewCapturedGlassesImageFromUi()
             GlassesDashboardAction.PreviewLastGlassesImage -> previewLastCapturedGlassesImageFromUi()
             GlassesDashboardAction.SaveFullResGlassesImage -> syncAllRemainingHeyCyanPhotosToGallery()
@@ -2459,6 +2491,10 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private fun navigateToDestination(destination: AppDestination) {
         when (destination) {
             AppDestination.GLASSES -> Unit
+            AppDestination.MODEL_CAPTURE -> startActivity(Intent(this, MainActivity::class.java).apply {
+                putExtra(EXTRA_INITIAL_DESTINATION, destination.name)
+                addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            })
             AppDestination.CHATS -> {
                 val last = ChatStore.listNonEmptyThreads().firstOrNull()
                 val now = System.currentTimeMillis()
@@ -2483,6 +2519,13 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                 addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
             })
         }
+    }
+
+    private fun destinationFromIntent(sourceIntent: Intent): AppDestination {
+        return com.fersaiyan.cyanbridge.shared.navigation.destinationFromNameOrDefault(
+            requestedName = sourceIntent.getStringExtra(EXTRA_INITIAL_DESTINATION),
+            deviceClass = DeviceProfileStore.selectedClass(this),
+        )
     }
 
     private fun initView() {
