@@ -11218,11 +11218,10 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                 downloadExitTransferTimeoutJob?.cancel()
                 downloadExitTransferTimeoutJob = null
                 if (resp.errorCode != 0) {
-                    downloadExitTransferTimedOut = true
-                    mediaSyncQuarantined = true
-                    mediaSyncQuarantineReason = "The glasses rejected exit from transfer mode."
-                    setHeyCyanMediaSyncStage(HeyCyanMediaSyncStage.FAILED, mediaSyncQuarantineReason!!)
-                    pendingDownloadTeardownFinish?.invoke(false)
+                    // The glasses return error=1 after successful transfers even once the P2P group is gone.
+                    // Treat confirmed local teardown as authoritative and avoid retaining the BLE/P2P lease forever.
+                    Log.w("DataDownload", "Transfer-exit callback reported error=${resp.errorCode}; completing local teardown")
+                    pendingDownloadTeardownFinish?.invoke(true)
                 } else {
                     pendingDownloadTeardownFinish?.invoke(true)
                 }
