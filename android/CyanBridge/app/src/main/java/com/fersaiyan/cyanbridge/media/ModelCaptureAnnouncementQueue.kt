@@ -61,7 +61,7 @@ class ModelCaptureAnnouncementQueue(
     }
 
     fun announceTakingPicture(operationId: ModelCaptureOperationId) {
-        start(operationId, "I'm taking a picture")
+        start(operationId, "Preparing your image")
     }
 
     fun announceSyncingImage(operationId: ModelCaptureOperationId) {

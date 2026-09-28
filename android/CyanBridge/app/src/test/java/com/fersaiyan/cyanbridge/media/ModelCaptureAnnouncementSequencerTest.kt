@@ -16,7 +16,7 @@ class ModelCaptureAnnouncementSequencerTest {
     fun syncingAnnouncementWaitsForTakingPictureTerminalCallback() {
         val sequencer = ModelCaptureAnnouncementSequencer()
 
-        val takingPicture = sequencer.start(firstOperation, "I'm taking a picture")
+        val takingPicture = sequencer.start(firstOperation, "Preparing your image")
         assertNull(sequencer.enqueue(firstOperation, "Syncing the image"))
 
         val syncing = sequencer.onTerminal(takingPicture)
@@ -27,8 +27,8 @@ class ModelCaptureAnnouncementSequencerTest {
     @Test
     fun staleTerminalCallbackCannotAdvanceAnotherOperation() {
         val sequencer = ModelCaptureAnnouncementSequencer()
-        val first = sequencer.start(firstOperation, "I'm taking a picture")
-        val second = sequencer.start(secondOperation, "I'm taking a picture")
+        val first = sequencer.start(firstOperation, "Preparing your image")
+        val second = sequencer.start(secondOperation, "Preparing your image")
 
         assertNull(sequencer.onTerminal(first))
         assertEquals(second, sequencer.currentAnnouncement())
@@ -37,8 +37,8 @@ class ModelCaptureAnnouncementSequencerTest {
     @Test
     fun utteranceIdsAreUniqueAndScopedToTheirOperation() {
         val sequencer = ModelCaptureAnnouncementSequencer()
-        val first = sequencer.start(firstOperation, "I'm taking a picture")
-        val second = sequencer.start(secondOperation, "I'm taking a picture")
+        val first = sequencer.start(firstOperation, "Preparing your image")
+        val second = sequencer.start(secondOperation, "Preparing your image")
 
         assertEquals("model_capture_capture-1_1", first.utteranceId)
         assertEquals("model_capture_capture-2_1", second.utteranceId)
@@ -61,7 +61,7 @@ class ModelCaptureAnnouncementSequencerTest {
     @Test
     fun terminalCallbackMustBelongToTheActiveAnnouncement() {
         val sequencer = ModelCaptureAnnouncementSequencer()
-        val takingPicture = sequencer.start(firstOperation, "I'm taking a picture")
+        val takingPicture = sequencer.start(firstOperation, "Preparing your image")
         val spoofed = takingPicture.copy(text = "Different text")
 
         assertNull(sequencer.onTerminal(spoofed))
@@ -71,7 +71,7 @@ class ModelCaptureAnnouncementSequencerTest {
     @Test
     fun terminalCallbackWithUnexpectedUtteranceIdCannotAdvanceTheQueue() {
         val sequencer = ModelCaptureAnnouncementSequencer()
-        val takingPicture = sequencer.start(firstOperation, "I'm taking a picture")
+        val takingPicture = sequencer.start(firstOperation, "Preparing your image")
         sequencer.enqueue(firstOperation, "Syncing the image")
 
         assertNull(sequencer.onTerminal("unrelated_utterance"))
@@ -82,7 +82,7 @@ class ModelCaptureAnnouncementSequencerTest {
     @Test
     fun cancellationClearsPendingSpeechAndIsIdempotent() {
         val sequencer = ModelCaptureAnnouncementSequencer()
-        val takingPicture = sequencer.start(firstOperation, "I'm taking a picture")
+        val takingPicture = sequencer.start(firstOperation, "Preparing your image")
         sequencer.enqueue(firstOperation, "Syncing the image")
 
         assertEquals(true, sequencer.cancel(firstOperation))

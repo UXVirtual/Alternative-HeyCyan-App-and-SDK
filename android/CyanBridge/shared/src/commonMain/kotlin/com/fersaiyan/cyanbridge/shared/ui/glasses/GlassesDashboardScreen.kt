@@ -481,6 +481,7 @@ private fun CoreGlassesControls(
         ActionRow(
             primaryLabel = stringResource(Res.string.dashboard_photo),
             onPrimary = { onAction(GlassesDashboardAction.CapturePhoto) },
+            primaryEnabled = !state.isVoiceCommandActive,
             secondaryLabel = if (state.showTuneBudsControls && state.isVideoRecording) {
                 stringResource(Res.string.dashboard_stop)
             } else {

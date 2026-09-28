@@ -1011,6 +1011,9 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             }
         }
         if (voiceQueryWasActive) finishAiQuestionForegroundWork()
+        if (voiceQueryWasActive) {
+            updateDashboardState { state -> state.copy(isVoiceCommandActive = false) }
+        }
         if (BuildConfig.DEBUG) wifiAdbDebugController.release()
         livePreviewDialog?.dismiss()
         livePreviewDialog = null
@@ -1704,6 +1707,13 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     }
 
     private fun isGlassesCommandBlocked(source: String): Boolean {
+        if (source.contains("voice", ignoreCase = true) &&
+            dashboardState.modelCapture.phase == ModelCapturePhase.SYNCING
+        ) {
+            Log.w("GlassesSession", "Skipping $source while 3D capture sync is active")
+            Toast.makeText(this, "Voice commands are unavailable while 3D capture is syncing.", Toast.LENGTH_SHORT).show()
+            return true
+        }
         val activeSession = GlassesSessionCoordinator.currentSession() ?: return false
         if (activeSession == GlassesSession.META_CAMERA &&
             isMetaRaybanSelected() &&
@@ -2055,7 +2065,9 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             GlassesDashboardAction.OpenExternalImageAutomationDiagnostics -> {
                 startActivity(Intent(this, ExternalAssistantAutomationSetupActivity::class.java))
             }
-            GlassesDashboardAction.CapturePhoto -> if (isEyevueSelected()) {
+            GlassesDashboardAction.CapturePhoto -> if (dashboardState.isVoiceCommandActive) {
+                Toast.makeText(this, "Wait for the voice command to finish before taking a picture.", Toast.LENGTH_SHORT).show()
+            } else if (isEyevueSelected()) {
                 getOrCreateEyevueManager().takePhoto()
             } else if (isTuneBudsSelected()) {
                 getOrCreateTuneBudsManager().takePhoto()
@@ -6515,6 +6527,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             Toast.makeText(this, "A voice question is already active", Toast.LENGTH_SHORT).show()
             return
         }
+        updateDashboardState { state -> state.copy(isVoiceCommandActive = true) }
         beginAiQuestionForegroundWork("Listening for glasses voice question")
         // Wake up screen if locked
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
@@ -6533,6 +6546,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         } catch (error: Exception) {
             Log.e("AIHijack", "Could not create voice recognizer", error)
             if (voiceQueryInProgress.compareAndSet(voiceQueryToken, null)) {
+                updateDashboardState { state -> state.copy(isVoiceCommandActive = false) }
                 finishAiQuestionForegroundWork()
             }
             Toast.makeText(this, "Speech recognition is unavailable", Toast.LENGTH_SHORT).show()
@@ -6552,6 +6566,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
         fun finishVoiceQueryWork() {
             if (voiceQueryInProgress.compareAndSet(voiceQueryToken, null)) {
+                updateDashboardState { state -> state.copy(isVoiceCommandActive = false) }
                 finishAiQuestionForegroundWork()
             }
         }
@@ -6705,7 +6720,9 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                                 stopSco()
                                 // The image flow now owns the shared foreground service. Release
                                 // only this voice-query guard without stopping that service.
-                                voiceQueryInProgress.compareAndSet(voiceQueryToken, null)
+                                if (voiceQueryInProgress.compareAndSet(voiceQueryToken, null)) {
+                                    updateDashboardState { state -> state.copy(isVoiceCommandActive = false) }
+                                }
                                 pendingVoiceImageQuestion = routing.normalizedGoal ?: prompt
                                 speak("Okay. I'll check what you see.")
                                 handleGlassesImageButtonPressed(

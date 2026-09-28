@@ -22,6 +22,7 @@ data class GlassesDashboardUiState(
     val nativePluginShortcut: NativePluginShortcutUiState? = null,
     val assistantMode: GlassesAssistantMode = GlassesAssistantMode.PHONE_ASSISTANT,
     val aiWakeWordRoute: AiWakeWordRoute = AiWakeWordRoute.VOICE_QUESTION,
+    val isVoiceCommandActive: Boolean = false,
     val imageQueryEnabled: Boolean = true,
     val imageQueryLabel: String = "Test image AI description",
     val imageThumbnailQualitySdkValue: Int = 4,
