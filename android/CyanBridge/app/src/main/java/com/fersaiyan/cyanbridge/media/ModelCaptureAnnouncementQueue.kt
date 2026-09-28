@@ -17,7 +17,22 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.Locale
 
-/** Owns only the two spoken status messages for a single model-capture operation. */
+internal object ModelCaptureCompletionAnnouncement {
+    const val confirmation = "Your image is ready"
+    private val compliments = listOf(
+        "You've got an eye for composition!",
+        "Your artistic flair really shines through!",
+        "That creative framing is fantastic!",
+        "Your visual storytelling is seriously impressive!",
+        "Wow! Check out that instinct for a striking shot!",
+    )
+
+    fun randomCompliment(): String = compliments.random()
+
+    internal fun variants(): Set<String> = compliments.toSet()
+}
+
+/** Owns only the spoken status messages for a single model-capture operation. */
 class ModelCaptureAnnouncementQueue(
     context: Context,
     private val scope: CoroutineScope,
@@ -66,6 +81,11 @@ class ModelCaptureAnnouncementQueue(
 
     fun announceSyncingImage(operationId: ModelCaptureOperationId) {
         enqueue(operationId, "Syncing the image")
+    }
+
+    fun announceImageReady(operationId: ModelCaptureOperationId) {
+        enqueue(operationId, ModelCaptureCompletionAnnouncement.confirmation)
+        enqueue(operationId, ModelCaptureCompletionAnnouncement.randomCompliment())
     }
 
     fun cancel(operationId: ModelCaptureOperationId) {

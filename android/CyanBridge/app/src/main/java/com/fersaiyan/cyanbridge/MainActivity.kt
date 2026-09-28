@@ -12111,6 +12111,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         modelCaptureRequest = null
         mediaDownloadPurpose = MediaDownloadPurpose.FULL_SYNC
         dispatchModelCapture(ModelCaptureAction.Complete(request.operationId, assetId))
+        modelCaptureAnnouncements.announceImageReady(request.operationId)
     }
     
     private fun showDownloadError(message: String, cleanup: Boolean = true) {

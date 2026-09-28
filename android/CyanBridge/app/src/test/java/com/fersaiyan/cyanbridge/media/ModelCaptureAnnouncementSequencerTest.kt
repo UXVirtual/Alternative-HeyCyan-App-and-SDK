@@ -25,6 +25,42 @@ class ModelCaptureAnnouncementSequencerTest {
     }
 
     @Test
+    fun completionAnnouncementCanStartAfterEarlierAnnouncementsFinish() {
+        val sequencer = ModelCaptureAnnouncementSequencer()
+        val takingPicture = sequencer.start(firstOperation, "Preparing your image")
+        val syncing = sequencer.enqueue(firstOperation, "Syncing the image")
+            ?: sequencer.onTerminal(takingPicture)
+
+        assertEquals("Syncing the image", syncing?.text)
+        assertNull(sequencer.onTerminal(syncing!!.utteranceId))
+
+        val complete = sequencer.enqueue(firstOperation, "Your image is ready")
+        assertEquals("Your image is ready", complete?.text)
+        assertEquals(firstOperation, complete?.operationId)
+    }
+
+    @Test
+    fun completionConfirmationPlaysBeforeTheCompliment() {
+        val sequencer = ModelCaptureAnnouncementSequencer()
+        val confirmation = sequencer.start(
+            firstOperation,
+            ModelCaptureCompletionAnnouncement.confirmation,
+        )
+        assertNull(sequencer.enqueue(firstOperation, "You have a real eye for composition."))
+
+        val compliment = sequencer.onTerminal(confirmation)
+        assertEquals("You have a real eye for composition.", compliment?.text)
+    }
+
+    @Test
+    fun completionAnnouncementRandomlyUsesOneOfFiveArtisticPhotographyCompliments() {
+        val variants = ModelCaptureCompletionAnnouncement.variants()
+
+        assertEquals(5, variants.size)
+        assertTrue((1..20).all { ModelCaptureCompletionAnnouncement.randomCompliment() in variants })
+    }
+
+    @Test
     fun staleTerminalCallbackCannotAdvanceAnotherOperation() {
         val sequencer = ModelCaptureAnnouncementSequencer()
         val first = sequencer.start(firstOperation, "Preparing your image")
