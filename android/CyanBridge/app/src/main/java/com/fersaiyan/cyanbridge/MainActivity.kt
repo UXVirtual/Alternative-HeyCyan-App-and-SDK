@@ -29,6 +29,7 @@ import com.fersaiyan.cyanbridge.media.VendorAlbumDownloader
 import com.fersaiyan.cyanbridge.media.HeyCyanP2pPolicy
 import com.fersaiyan.cyanbridge.media.HeyCyanMediaManifest
 import com.fersaiyan.cyanbridge.media.HeyCyanMediaManifestItem
+import com.fersaiyan.cyanbridge.media.HeyCyanMediaManifestSnapshotStore
 import com.fersaiyan.cyanbridge.media.HeyCyanModelCapturePolicy
 import com.fersaiyan.cyanbridge.media.HeyCyanPhotoReadyClaim
 import com.fersaiyan.cyanbridge.media.HeyCyanMediaType
@@ -711,6 +712,8 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private var mediaDownloadPurpose = MediaDownloadPurpose.FULL_SYNC
     private var highQualityImageRequest: HighQualityImageRequest? = null
     private var modelCaptureRequest: ModelCaptureRequest? = null
+    private var lastHeyCyanMediaManifestSnapshot: Set<HeyCyanMediaManifestItem>? = null
+    private val heyCyanMediaManifestSnapshots by lazy { HeyCyanMediaManifestSnapshotStore(this) }
     private val modelCaptureAnnouncements by lazy { ModelCaptureAnnouncementQueue(this, lifecycleScope) }
     private val modelCaptureProfileChangeListener =
         android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, _ ->
@@ -8311,6 +8314,10 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         val profileMacAddress: String,
         val sessionLease: GlassesSessionLease,
         val preCaptureMediaSnapshot: Set<HeyCyanMediaManifestItem>? = null,
+        val preCapturePhotoCount: Int? = null,
+        val confirmedFollowUpCounts: HeyCyanMediaCounts? = null,
+        val selectedRemotePhoto: String? = null,
+        val downloadedAssetId: ModelCaptureAssetId? = null,
     )
 
     private fun isActiveModelCaptureRequest(
@@ -8401,16 +8408,14 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             operationId = operationId,
             profileMacAddress = profile.macAddress,
             sessionLease = lease,
+            preCaptureMediaSnapshot = lastHeyCyanMediaManifestSnapshot
+                ?: heyCyanMediaManifestSnapshots.load(profile.macAddress),
         )
         modelCaptureAnnouncements.announceTakingPicture(operationId)
         setTransferUiVisible(true)
         setTransferFlowLabel(GlassesSyncFlow.CUSTOM)
         setTransferDetail("Preparing 3D capture...")
-        startDataDownload(
-            mode = GlassesSyncFlow.CUSTOM,
-            purpose = MediaDownloadPurpose.MODEL_CAPTURE,
-            preflightValidated = true,
-        )
+        captureModelCaptureBeforeTransfer(modelCaptureRequest!!)
     }
 
     private fun isHighQualityImageTransfer(): Boolean =
@@ -9093,22 +9098,25 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         val setup = HeyCyanBleSetupTrace.snapshot()
         val quietMs = SystemClock.elapsedRealtime() - setup.lastEventAtMs
         if (!ble.isConnected || !ble.isReady || setup.lastEvent != "servicesDiscovered" || quietMs < HEY_CYAN_BLE_QUIET_MS) {
-            failHeyCyanMediaSyncPreflight("BLE is not connected, ready, and quiet yet. Wait briefly, then retry sync.")
+            failHeyCyanMediaSyncPreflight(purpose, "BLE is not connected, ready, and quiet yet. Wait briefly, then retry sync.")
             return
         }
-        if (!GlassesSessionCoordinator.canRunBackgroundCommand()) {
-            failHeyCyanMediaSyncPreflight("Another glasses command or workflow is still active.")
+        val reusingModelCaptureLease = purpose == MediaDownloadPurpose.MODEL_CAPTURE &&
+            modelCaptureRequest?.sessionLease === mediaSessionLease &&
+            mediaSessionLease?.let(GlassesSessionCoordinator::isActive) == true
+        if (!GlassesSessionCoordinator.canRunBackgroundCommand() && !reusingModelCaptureLease) {
+            failHeyCyanMediaSyncPreflight(purpose, "Another glasses command or workflow is still active.")
             return
         }
         val connectivity = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
         if (boundNetwork != null || connectivity.boundNetworkForProcess != null) {
-            failHeyCyanMediaSyncPreflight("The app is still bound to a previous network connection.")
+            failHeyCyanMediaSyncPreflight(purpose, "The app is still bound to a previous network connection.")
             return
         }
 
         val p2p = WifiP2pManagerSingleton.getInstance(this)
         if (p2p.isConnecting() || p2p.isConnected()) {
-            failHeyCyanMediaSyncPreflight("A Wi-Fi Direct connection is already active.")
+            failHeyCyanMediaSyncPreflight(purpose, "A Wi-Fi Direct connection is already active.")
             return
         }
 
@@ -9118,7 +9126,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         downloadPreflightJob = lifecycleScope.launch {
             delay(P2P_PREFLIGHT_QUERY_TIMEOUT_MS)
             if (!resolved && attemptId == downloadPreflightAttemptId) {
-                failHeyCyanMediaSyncPreflight("Could not confirm that the previous Wi-Fi Direct group is gone.")
+                failHeyCyanMediaSyncPreflight(purpose, "Could not confirm that the previous Wi-Fi Direct group is gone.")
             }
         }
         p2p.queryGroupFormed { groupFormed ->
@@ -9128,6 +9136,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             downloadPreflightJob = null
             if (groupFormed != false) {
                 failHeyCyanMediaSyncPreflight(
+                    purpose,
                     if (groupFormed == true) {
                         "A Wi-Fi Direct group is already active. Finish its cleanup before syncing."
                     } else {
@@ -9136,9 +9145,24 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                 )
                 return@queryGroupFormed
             }
+            val confirmedModelCounts = modelCaptureRequest
+                ?.takeIf { purpose == MediaDownloadPurpose.MODEL_CAPTURE }
+                ?.confirmedFollowUpCounts
+            if (confirmedModelCounts != null) {
+                pendingHeyCyanSyncBeforeCounts = confirmedModelCounts
+                updateHeyCyanMediaInventory(confirmedModelCounts)
+                startDataDownload(
+                    mode = mode,
+                    retryCount = retryCount,
+                    isRetry = isRetry,
+                    purpose = purpose,
+                    preflightValidated = true,
+                )
+                return@queryGroupFormed
+            }
             requestHeyCyanMediaCountsForSync { beforeCounts ->
                 if (beforeCounts == null) {
-                    failHeyCyanMediaSyncPreflight("Could not read media counts before starting sync.")
+                    failHeyCyanMediaSyncPreflight(purpose, "Could not read media counts before starting sync.")
                     return@requestHeyCyanMediaCountsForSync
                 }
                 pendingHeyCyanSyncBeforeCounts = beforeCounts
@@ -9155,8 +9179,20 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     }
 
     private fun failHeyCyanMediaSyncPreflight(reason: String) {
+        failHeyCyanMediaSyncPreflight(MediaDownloadPurpose.FULL_SYNC, reason)
+    }
+
+    private fun failHeyCyanMediaSyncPreflight(
+        purpose: MediaDownloadPurpose,
+        reason: String,
+    ) {
         Log.w("DataDownload", "HeyCyan media-sync preflight failed: $reason")
         setHeyCyanMediaSyncStage(HeyCyanMediaSyncStage.FAILED, reason)
+        if (purpose == MediaDownloadPurpose.MODEL_CAPTURE) {
+            modelCaptureRequest?.operationId?.let { operationId ->
+                finishModelCaptureFailure(operationId, reason)
+            }
+        }
         Toast.makeText(this, reason, Toast.LENGTH_LONG).show()
     }
 
@@ -10062,6 +10098,10 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                 val jpgFiles = manifest.photos.map { it.remoteFileName }
                 val mp4Files = manifest.videos.map { it.remoteFileName }
                 val opusFiles = manifest.audio.map { it.remoteFileName }
+                lastHeyCyanMediaManifestSnapshot = manifest.items.toSet()
+                DeviceProfileStore.loadLastSelected(this)?.macAddress?.let { profileMacAddress ->
+                    heyCyanMediaManifestSnapshots.save(profileMacAddress, manifest.items.toSet())
+                }
                 val vendorQueue = manifest.items.map { item ->
                     VendorMediaItem(
                         fileName = item.remoteFileName,
@@ -10081,10 +10121,9 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                     "Media list parsed: jpg=${jpgFiles.size}, mp4=${mp4Files.size}, opus=${opusFiles.size}"
                 )
 
-                if (mediaDownloadPurpose == MediaDownloadPurpose.MODEL_CAPTURE) {
-                    handleModelCaptureManifest(manifest, deviceIp, sessionId)
-                    return
-                }
+                if (mediaDownloadPurpose == MediaDownloadPurpose.MODEL_CAPTURE &&
+                    !handleModelCaptureManifest(manifest, sessionId)
+                ) return
 
                 if (isHighQualityImageTransfer()) {
                     if (jpgFiles.isEmpty()) {
@@ -10180,18 +10219,32 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             }
         }
 
-    private suspend fun handleModelCaptureManifest(
+    private fun handleModelCaptureManifest(
         manifest: HeyCyanMediaManifest,
-        deviceIp: String,
         sessionId: Long,
-    ) {
-        val request = modelCaptureRequest ?: return
-        if (!isActiveModelCaptureRequest(request, sessionId)) return
-        val preCaptureSnapshot = request.preCaptureMediaSnapshot
-        if (preCaptureSnapshot == null) {
+    ): Boolean {
+        val request = modelCaptureRequest ?: return false
+        if (!isActiveModelCaptureRequest(request, sessionId)) return false
+        val photo = HeyCyanModelCapturePolicy.selectCapturedPhoto(
+            preCaptureSnapshot = request.preCaptureMediaSnapshot,
+            baselinePhotoCount = request.preCapturePhotoCount,
+            postCaptureItems = manifest.items,
+        )
+            .getOrElse { error ->
+                finishModelCaptureFailure(request.operationId, error.message ?: "Could not identify the new photo")
+                return false
+            }
+        modelCaptureRequest = request.copy(selectedRemotePhoto = photo.remoteFileName)
+        setTransferDetail("Photo saved. Syncing media from the glasses...")
+        return true
+    }
+
+    private fun captureModelCaptureBeforeTransfer(request: ModelCaptureRequest) {
+        lifecycleScope.launch(Dispatchers.IO) {
             try {
+                if (!isActiveModelCaptureRequest(request)) return@launch
                 val confirmedCapture = captureCountConfirmedHeyCyanImage(
-                    preCaptureMediaSnapshot = manifest.items.toSet(),
+                    request.preCaptureMediaSnapshot ?: emptySet(),
                 )
                 updateHeyCyanMediaInventory(confirmedCapture.followUpCounts)
                 val persistence = HeyCyanCapturePolicy.resolvePhotoPersistence(
@@ -10201,32 +10254,33 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                 if (persistence.result != HeyCyanCaptureResult.PHOTO_PERSISTED) {
                     throw IOException("The glasses did not confirm that the 3D capture was saved")
                 }
-                if (!isActiveModelCaptureRequest(request, sessionId)) return
-                modelCaptureRequest = request.copy(
-                    preCaptureMediaSnapshot = confirmedCapture.preCaptureMediaSnapshot,
+                if (!isActiveModelCaptureRequest(request)) return@launch
+                val capturedRequest = request.copy(
+                    preCaptureMediaSnapshot = request.preCaptureMediaSnapshot?.takeIf { snapshot ->
+                        snapshot.count { it.type == HeyCyanMediaType.PHOTO } ==
+                            confirmedCapture.baselineCounts.photos
+                    },
+                    preCapturePhotoCount = confirmedCapture.baselineCounts.photos,
+                    confirmedFollowUpCounts = confirmedCapture.followUpCounts,
                 )
+                if (modelCaptureRequest !== request) return@launch
+                modelCaptureRequest = capturedRequest
                 withContext(Dispatchers.Main) {
-                    if (!isActiveModelCaptureRequest(modelCaptureRequest ?: return@withContext, sessionId)) {
+                    if (!isActiveModelCaptureRequest(capturedRequest)) {
                         return@withContext
                     }
-                    dispatchModelCapture(ModelCaptureAction.CapturePersisted(request.operationId))
-                    modelCaptureAnnouncements.announceSyncingImage(request.operationId)
+                    dispatchModelCapture(ModelCaptureAction.CapturePersisted(capturedRequest.operationId))
+                    modelCaptureAnnouncements.announceSyncingImage(capturedRequest.operationId)
                     setTransferDetail("Photo saved. Finding the full-resolution image...")
+                    startDataDownload(
+                        mode = GlassesSyncFlow.CUSTOM,
+                        purpose = MediaDownloadPurpose.MODEL_CAPTURE,
+                    )
                 }
-                if (!isActiveModelCaptureRequest(modelCaptureRequest ?: return, sessionId)) return
-                downloadMediaList(deviceIp, sessionId)
             } catch (error: Exception) {
                 finishModelCaptureFailure(request.operationId, error.message ?: "3D capture failed")
             }
-            return
         }
-
-        val photo = HeyCyanModelCapturePolicy.selectCapturedPhoto(preCaptureSnapshot, manifest.items)
-            .getOrElse { error ->
-                finishModelCaptureFailure(request.operationId, error.message ?: "Could not identify the new photo")
-                return
-            }
-        downloadModelCapturePhoto(request.operationId, photo.remoteFileName, deviceIp, sessionId)
     }
 
     private suspend fun downloadModelCapturePhoto(
@@ -10951,6 +11005,11 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     }
     
     private suspend fun downloadSingleJpgFile(fileName: String, deviceIp: String): Boolean {
+        val modelRequest = modelCaptureRequest?.takeIf {
+            mediaDownloadPurpose == MediaDownloadPurpose.MODEL_CAPTURE &&
+                it.selectedRemotePhoto == fileName
+        }
+        val modelCapturePart = modelRequest?.let { modelCaptureAssets.createPartFile() }
         return try {
             val url = "http://$deviceIp/files/$fileName"
             Log.i("DataDownload", "Downloading: $url")
@@ -10958,7 +11017,16 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             var saved: GallerySaveResult? = null
             httpGet(URL(url), 10000, 30000) { stream, _ ->
                 val takenMs = parseTakenTimeMillisFromFilename(fileName) ?: System.currentTimeMillis()
-                saved = saveJpegToGallery(stream, fileName, takenMs)
+                if (modelCapturePart == null) {
+                    saved = saveJpegToGallery(stream, fileName, takenMs)
+                } else {
+                    modelCapturePart.outputStream().buffered(128 * 1024).use { output ->
+                        stream.copyTo(output, bufferSize = 128 * 1024)
+                    }
+                    modelCapturePart.inputStream().use { partInput ->
+                        saved = saveJpegToGallery(partInput, fileName, takenMs)
+                    }
+                }
             }
 
             val savedResult = saved
@@ -10973,14 +11041,28 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                 byteCount = savedResult?.bytes ?: 0L,
             )
             if (success) {
+                if (modelRequest != null && modelCapturePart != null) {
+                    val assetId = runCatching { modelCaptureAssets.promoteVerifiedPart(modelCapturePart) }
+                        .getOrElse {
+                            modelCapturePart.delete()
+                            return false
+                        }
+                    if (modelCaptureRequest?.operationId != modelRequest.operationId) {
+                        modelCaptureAssets.delete(assetId)
+                        return false
+                    }
+                    modelCaptureRequest = modelRequest.copy(downloadedAssetId = assetId)
+                }
                 Log.i("DataDownload", "Saved to gallery: name=$fileName uri=${savedResult.uri}")
                 true
             } else {
+                modelCapturePart?.delete()
                 Log.e("DataDownload", "Failed to download/save: $fileName")
                 false
             }
         } catch (e: Exception) {
             if (e is CancellationException) throw e
+            modelCapturePart?.delete()
             recordHeyCyanTransferResult(fileName, HeyCyanMediaType.PHOTO, false, 0L, e.message.orEmpty())
             Log.e("DataDownload", "Error downloading $fileName: ${e.message}", e)
             false
@@ -11996,9 +12078,22 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         )
         cleanupP2pAfterDownload {
             completeHeyCyanSyncAfterConfirmedTeardown(message)
+            completeModelCaptureAfterConfirmedSync()
         }
         Log.i("DataDownload", "SUCCESS: $message (flow=${downloadFlowMode.label})")
         Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+    }
+
+    private fun completeModelCaptureAfterConfirmedSync() {
+        val request = modelCaptureRequest ?: return
+        if (mediaDownloadPurpose != MediaDownloadPurpose.MODEL_CAPTURE) return
+        val assetId = request.downloadedAssetId ?: run {
+            finishModelCaptureFailure(request.operationId, "The captured photo was not included in the completed sync.")
+            return
+        }
+        modelCaptureRequest = null
+        mediaDownloadPurpose = MediaDownloadPurpose.FULL_SYNC
+        dispatchModelCapture(ModelCaptureAction.Complete(request.operationId, assetId))
     }
     
     private fun showDownloadError(message: String, cleanup: Boolean = true) {

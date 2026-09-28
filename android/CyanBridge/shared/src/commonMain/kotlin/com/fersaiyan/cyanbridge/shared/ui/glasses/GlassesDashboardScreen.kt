@@ -421,7 +421,7 @@ private fun MeetingBanner(label: String, onStop: () -> Unit) {
 }
 
 @Composable
-private fun TransferCard(
+internal fun TransferCard(
     state: GlassesDashboardUiState,
     onStop: () -> Unit,
 ) {

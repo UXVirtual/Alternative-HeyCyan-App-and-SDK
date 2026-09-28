@@ -89,6 +89,14 @@ fun ModelCaptureScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             item { GlassesStatusCard(glassesState) }
+            if (glassesState.transfer.isVisible) {
+                item {
+                    TransferCard(
+                        state = glassesState,
+                        onStop = onCancelCapture,
+                    )
+                }
+            }
             item {
                 ModelCaptureStatusCard(
                     state = state,

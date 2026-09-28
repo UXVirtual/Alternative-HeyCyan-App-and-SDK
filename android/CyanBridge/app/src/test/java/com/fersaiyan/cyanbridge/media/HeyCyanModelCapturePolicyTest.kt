@@ -12,6 +12,7 @@ class HeyCyanModelCapturePolicyTest {
 
         val selected = HeyCyanModelCapturePolicy.selectCapturedPhoto(
             preCaptureSnapshot = setOf(oldPhoto),
+            baselinePhotoCount = 1,
             postCaptureItems = listOf(oldPhoto, newPhoto),
         ).getOrThrow()
 
@@ -23,13 +24,52 @@ class HeyCyanModelCapturePolicyTest {
         val oldPhoto = HeyCyanMediaManifestItem("old.jpg", HeyCyanMediaType.PHOTO)
 
         assertTrue(
-            HeyCyanModelCapturePolicy.selectCapturedPhoto(setOf(oldPhoto), listOf(oldPhoto)).isFailure,
+            HeyCyanModelCapturePolicy.selectCapturedPhoto(
+                preCaptureSnapshot = setOf(oldPhoto),
+                baselinePhotoCount = 1,
+                postCaptureItems = listOf(oldPhoto),
+            ).isFailure,
         )
         assertTrue(
             HeyCyanModelCapturePolicy.selectCapturedPhoto(
-                setOf(oldPhoto),
-                listOf(
+                preCaptureSnapshot = setOf(oldPhoto),
+                baselinePhotoCount = 1,
+                postCaptureItems = listOf(
                     oldPhoto,
+                    HeyCyanMediaManifestItem("one.jpg", HeyCyanMediaType.PHOTO),
+                    HeyCyanMediaManifestItem("two.jpg", HeyCyanMediaType.PHOTO),
+                ),
+            ).isFailure,
+        )
+    }
+
+    @Test
+    fun acceptsTheOnlyPostCapturePhotoWhenTheBaselineProvesNoPhotoExisted() {
+        val capturedPhoto = HeyCyanMediaManifestItem("captured.jpg", HeyCyanMediaType.PHOTO)
+
+        val selected = HeyCyanModelCapturePolicy.selectCapturedPhoto(
+            preCaptureSnapshot = null,
+            baselinePhotoCount = 0,
+            postCaptureItems = listOf(capturedPhoto),
+        ).getOrThrow()
+
+        assertEquals(capturedPhoto, selected)
+    }
+
+    @Test
+    fun rejectsSnapshotlessSelectionWhenExistingOrAmbiguousPhotosRemain() {
+        assertTrue(
+            HeyCyanModelCapturePolicy.selectCapturedPhoto(
+                preCaptureSnapshot = null,
+                baselinePhotoCount = 1,
+                postCaptureItems = listOf(HeyCyanMediaManifestItem("unknown.jpg", HeyCyanMediaType.PHOTO)),
+            ).isFailure,
+        )
+        assertTrue(
+            HeyCyanModelCapturePolicy.selectCapturedPhoto(
+                preCaptureSnapshot = null,
+                baselinePhotoCount = 0,
+                postCaptureItems = listOf(
                     HeyCyanMediaManifestItem("one.jpg", HeyCyanMediaType.PHOTO),
                     HeyCyanMediaManifestItem("two.jpg", HeyCyanMediaType.PHOTO),
                 ),
